@@ -75,7 +75,7 @@ export const StockReportPage = () => {
       });
       setBranches(Array.from(uniqueBranchesMap.values()));
 
-      setProducts(prodRes.data || []);
+      setProducts((prodRes.data as any) || []);
     } catch (err: any) {
       setError(err.message || 'Error al cargar informe de stock');
     } finally {

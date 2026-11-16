@@ -1,11 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../config/supabase';
-import { Package, Plus, Trash2, Pencil, Search, AlertCircle, X, Tag } from 'lucide-react';
+import { Package, Plus, Trash2, Pencil, Search, AlertCircle, X, Tag, Store } from 'lucide-react';
 import { usePermissions } from '../../../context/AuthContext';
 import { ConfirmModal } from '../../../components/ConfirmModal';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Modal } from '../../../components/ui/Modal';
 import { EmptyState } from '../../../components/ui/EmptyState';
+
+interface StockByWarehouse {
+  warehouse_id: number;
+  quantity: number;
+  cat_warehouses?: {
+    id: number;
+    name: string;
+    code: string;
+  };
+}
 
 interface ProductDb {
   id: number;
@@ -18,6 +28,8 @@ interface ProductDb {
   current_stock: number;
   is_active: boolean;
   created_at: string;
+  unit_id?: number | null;
+  brand_id?: number | null;
   // Joins
   type_name?: string;
   tax_name?: string;
@@ -25,7 +37,8 @@ interface ProductDb {
   unit_name?: string;
   brand_name?: string;
   global_stock?: number;
-  tra_product_stock?: { quantity: number }[];
+  tra_product_stock?: StockByWarehouse[];
+  stock_by_warehouse?: Record<number, number>;
 }
 
 interface ProductTypeDb {
@@ -50,6 +63,14 @@ interface PartsBrandDb {
   name: string;
 }
 
+interface WarehouseDb {
+  id: number;
+  name: string;
+  code: string;
+  branch_id: number;
+  cat_branches?: { id: number; name: string };
+}
+
 export const ProductsPage = () => {
   const { hasPermission } = usePermissions();
   const [products, setProducts] = useState<ProductDb[]>([]);
@@ -57,6 +78,8 @@ export const ProductsPage = () => {
   const [taxes, setTaxes] = useState<TaxDb[]>([]);
   const [units, setUnits] = useState<MeasurementUnitDb[]>([]);
   const [brands, setBrands] = useState<PartsBrandDb[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseDb[]>([]);
+  const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('ALL');
   
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -91,35 +114,40 @@ export const ProductsPage = () => {
     try {
       setLoading(true);
       
-      const [typesRes, taxesRes, unitsRes, brandsRes, productsRes] = await Promise.all([
+      const [typesRes, taxesRes, unitsRes, brandsRes, whRes, productsRes] = await Promise.all([
         supabase.from('cat_product_types').select('*'),
         supabase.from('cat_taxes').select('*').eq('is_active', true),
         supabase.from('cat_measurement_units').select('*').eq('is_active', true),
         supabase.from('cat_parts_brands').select('*').eq('is_active', true),
-        supabase.from('cat_products').select('*, tra_product_stock(quantity)').order('id', { ascending: false })
+        supabase.from('cat_warehouses').select('*, cat_branches(id, name)').eq('is_active', true).order('branch_id'),
+        supabase.from('cat_products').select('*, tra_product_stock(warehouse_id, quantity, cat_warehouses(id, name, code))').order('id', { ascending: false })
       ]);
 
       if (typesRes.error) throw typesRes.error;
       if (taxesRes.error) throw taxesRes.error;
       if (unitsRes.error) throw unitsRes.error;
       if (brandsRes.error) throw brandsRes.error;
+      if (whRes.error) throw whRes.error;
       if (productsRes.error) throw productsRes.error;
 
       setTypes(typesRes.data || []);
       setTaxes(taxesRes.data || []);
       setUnits(unitsRes.data || []);
       setBrands(brandsRes.data || []);
+      setWarehouses((whRes.data as any) || []);
 
       // Manual join mapping
-      const combinedProducts = (productsRes.data || []).map(p => {
+      const combinedProducts = (productsRes.data || []).map((p: any) => {
         const type = typesRes.data?.find(t => t.id === p.type_id);
         const tax = taxesRes.data?.find(t => t.id === p.tax_id);
         const unit = unitsRes.data?.find(u => u.id === p.unit_id);
         const brand = brandsRes.data?.find(b => b.id === p.brand_id);
         
-        // Sumar el stock de todas las bodegas para tener el Total Global
+        // Sumar el stock de todas las bodegas para tener el Total Global y por bodega
+        const stockByWarehouse: Record<number, number> = {};
         let totalStock = 0;
         p.tra_product_stock?.forEach((stk: any) => {
+          stockByWarehouse[stk.warehouse_id] = stk.quantity;
           totalStock += stk.quantity;
         });
 
@@ -128,9 +156,10 @@ export const ProductsPage = () => {
           type_name: type?.name || 'Sin Categoría',
           tax_name: tax?.name || 'Sin Impuesto',
           tax_percentage: tax?.percentage || 0,
-          unit_name: unit?.name || 'N/A',
+          unit_name: unit?.name || '',
           brand_name: brand?.name || 'N/A',
-          global_stock: totalStock
+          global_stock: totalStock,
+          stock_by_warehouse: stockByWarehouse
         };
       });
 
@@ -279,18 +308,39 @@ export const ProductsPage = () => {
 
       {/* Tabla */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Buscar por SKU o nombre..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-80"
-            />
+        <div className="p-4 border-b border-slate-100 flex flex-wrap gap-4 items-center justify-between bg-slate-50">
+          <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[300px]">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Buscar por SKU o nombre..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="pl-9 pr-4 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-full bg-white"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Store className="w-4 h-4 text-slate-500" />
+              <select
+                value={selectedWarehouseFilter}
+                onChange={e => setSelectedWarehouseFilter(e.target.value)}
+                className="border border-slate-300 rounded-xl py-2 px-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium text-slate-700 shadow-sm"
+              >
+                <option value="ALL">📦 Todas las Bodegas (Consolidado)</option>
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.id.toString()}>
+                    🏢 {w.name} ({w.code})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-          <p className="text-sm text-slate-500 font-medium">{filteredProducts.length} productos registrados</p>
+
+          <p className="text-xs text-slate-500 font-medium">
+            Mostrando <strong>{filteredProducts.length}</strong> de <strong>{products.length}</strong> productos
+          </p>
         </div>
         
         <div className="overflow-x-auto flex-1">
@@ -301,7 +351,11 @@ export const ProductsPage = () => {
                   <th className="p-4 font-semibold text-left">Marca</th>
                   <th className="p-4 font-semibold text-left">Categoría</th>
                   <th className="p-4 font-semibold text-right">Precio Base</th>
-                  <th className="p-4 font-semibold text-right w-24">Stock</th>
+                  <th className="p-4 font-semibold text-right min-w-[130px]">
+                    {selectedWarehouseFilter === 'ALL'
+                      ? 'Stock Total'
+                      : `Stock (${warehouses.find(w => w.id.toString() === selectedWarehouseFilter)?.name || 'Bodega'})`}
+                  </th>
                   <th className="p-4 font-semibold text-center w-24">Estado</th>
                   <th className="p-4 font-semibold text-right w-24">Acciones</th>
                 </tr>
@@ -309,7 +363,11 @@ export const ProductsPage = () => {
             <tbody className="divide-y divide-slate-100">
               {filteredProducts.map(product => {
                 const finalPrice = product.base_price * (1 + (product.tax_percentage || 0) / 100);
-                
+                const isService = product.type_name?.toLowerCase().includes('servicio');
+                const stockToShow = selectedWarehouseFilter === 'ALL'
+                  ? (product.global_stock || 0)
+                  : (product.stock_by_warehouse?.[Number(selectedWarehouseFilter)] || 0);
+
                 return (
                   <tr key={product.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-4">
@@ -331,12 +389,31 @@ export const ProductsPage = () => {
                       <p className="font-bold text-slate-800">${Number(product.base_price).toFixed(2)}</p>
                     </td>
                     <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <span className={`font-bold text-lg ${product.global_stock && product.global_stock > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                          {product.global_stock || 0}
+                      {isService ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                          Servicio (Sin stock)
                         </span>
-                        <span className="text-xs text-slate-500 font-medium">{product.unit_name}</span>
-                      </div>
+                      ) : (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className={`font-bold text-lg ${stockToShow > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                              {stockToShow}
+                            </span>
+                            <span className="text-xs text-slate-500 font-medium">
+                              {product.unit_name && product.unit_name !== 'N/A' ? product.unit_name : 'unid.'}
+                            </span>
+                          </div>
+                          {selectedWarehouseFilter === 'ALL' && product.tra_product_stock && product.tra_product_stock.length > 0 && (
+                            <div className="flex flex-wrap justify-end gap-1 text-[10px] text-slate-400 font-mono">
+                              {product.tra_product_stock.map((s, idx) => (
+                                <span key={idx} className="bg-slate-50 border border-slate-100 px-1 rounded">
+                                  {s.cat_warehouses?.code || `B${s.warehouse_id}`}: <strong className="text-slate-600">{s.quantity}</strong>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold ${

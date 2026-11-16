@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../config/supabase';
-import { Package, Search, Plus, Trash2, Save, ArrowLeft, Building, Users, AlertCircle } from 'lucide-react';
+import { Package, Search, Plus, Trash2, Save, ArrowLeft, Building, Users, AlertCircle, FileText, BarChart3 } from 'lucide-react';
 import { usePermissions } from '../../../context/AuthContext';
 import { useAuth } from '../../../context/AuthContext';
+import { PurchasesDocumentsTab } from '../components/PurchasesDocumentsTab';
+import { PurchasesReportsTab } from '../components/PurchasesReportsTab';
 
 // --- Types ---
 interface Supplier {
@@ -52,6 +54,7 @@ export const PurchasesPage = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [activeTab, setActiveTab] = useState<'proceso' | 'documentos' | 'informes'>('proceso');
 
   useEffect(() => {
     fetchCatalogs();
@@ -130,20 +133,15 @@ export const PurchasesPage = () => {
       setSaving(true);
       setError(null);
 
-      // 1. Obtener el dbUser (ID interno) a partir del user.id de Supabase
-      const { data: dbUser, error: userError } = await supabase
-        .from('seg_users')
-        .select('id')
-        .eq('auth_user_id', user?.id)
-        .single();
-
-      if (userError) throw new Error('No se pudo identificar tu usuario en la base de datos');
+      // 1. Validar usuario identificado en la sesión
+      const userId = user?.id;
+      if (!userId) throw new Error('No se pudo identificar tu usuario en la base de datos');
 
       // 2. Insertar Cabecera de Compra
       const { data: purchaseData, error: purchaseError } = await supabase
         .from('tra_purchases')
         .insert([{
-          user_id: dbUser.id,
+          user_id: userId,
           supplier_id: Number(selectedSupplier),
           warehouse_id: Number(selectedWarehouse),
           invoice_number: invoiceNumber,
@@ -190,7 +188,7 @@ export const PurchasesPage = () => {
           reference_id: purchaseData.id,
           quantity: d.quantity,
           stock_balance: newStock,
-          user_id: dbUser.id
+          user_id: userId
         });
 
         // C. Actualizar o Insertar en Stock
@@ -232,27 +230,73 @@ export const PurchasesPage = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
             <Package className="text-blue-600" />
-            Ingreso de Mercadería (Compras)
+            Módulo de Compras
           </h1>
-          <p className="text-slate-500 mt-1">Registra facturas de proveedores e incrementa tu stock.</p>
+          <p className="text-slate-500 mt-1">
+            Gestiona el ingreso de mercadería de proveedores, facturas registradas e informes de costos.
+          </p>
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-100 flex items-center gap-3 mb-6">
-          <AlertCircle className="w-5 h-5" />
-          <p>{error}</p>
-        </div>
-      )}
+      {/* Navegación por Pestañas */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 mb-6 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('proceso')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            activeTab === 'proceso'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          Procesos (Ingreso de Mercadería)
+        </button>
 
-      {success && (
-        <div className="bg-emerald-50 text-emerald-600 p-4 rounded-xl border border-emerald-100 flex items-center gap-3 mb-6">
-          <Package className="w-5 h-5" />
-          <p className="font-semibold">¡Compra registrada exitosamente! El stock ha sido actualizado.</p>
-        </div>
-      )}
+        <button
+          onClick={() => setActiveTab('documentos')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            activeTab === 'documentos'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          Documentos y Facturas
+        </button>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
+        <button
+          onClick={() => setActiveTab('informes')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            activeTab === 'informes'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          Informes de Compras
+        </button>
+      </div>
+
+      {activeTab === 'documentos' && <PurchasesDocumentsTab />}
+      {activeTab === 'informes' && <PurchasesReportsTab />}
+
+      {activeTab === 'proceso' && (
+        <>
+          {error && (
+            <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-100 flex items-center gap-3 mb-6">
+              <AlertCircle className="w-5 h-5" />
+              <p>{error}</p>
+            </div>
+          )}
+
+          {success && (
+            <div className="bg-emerald-50 text-emerald-600 p-4 rounded-xl border border-emerald-100 flex items-center gap-3 mb-6">
+              <Package className="w-5 h-5" />
+              <p className="font-semibold">¡Compra registrada exitosamente! El stock ha sido actualizado.</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
 
         {/* LADO IZQUIERDO: DETALLES DE COMPRA */}
         <div className="lg:col-span-2 flex flex-col space-y-4">
@@ -463,6 +507,8 @@ export const PurchasesPage = () => {
         </div>
 
       </div>
+        </>
+      )}
     </div>
   );
 };

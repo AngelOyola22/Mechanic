@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../config/supabase';
-import { Activity, Search, AlertCircle, ArrowUpRight, ArrowDownRight, Package } from 'lucide-react';
+import { Activity, Search, AlertCircle, ArrowUpRight, ArrowDownRight, Package, Store } from 'lucide-react';
 
 interface KardexRecord {
   id: number;
@@ -18,6 +18,8 @@ interface KardexRecord {
 
 export const KardexPage = () => {
   const [records, setRecords] = useState<KardexRecord[]>([]);
+  const [warehouses, setWarehouses] = useState<{ id: number; name: string }[]>([]);
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -29,20 +31,26 @@ export const KardexPage = () => {
   const fetchKardex = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('tra_kardex')
-        .select(`
-          id, quantity, stock_balance, created_at, reference_id,
-          cat_products (sku, name),
-          cat_warehouses (code, name, cat_branches(name)),
-          tra_movement_types (name, multiplier),
-          seg_users (full_name)
-        `)
-        .order('id', { ascending: false })
-        .limit(200); // Para no colapsar la memoria
+      const [kardexRes, whRes] = await Promise.all([
+        supabase
+          .from('tra_kardex')
+          .select(`
+            id, quantity, stock_balance, created_at, reference_id,
+            cat_products (sku, name),
+            cat_warehouses (code, name, cat_branches(name)),
+            tra_movement_types (name, multiplier),
+            seg_users (full_name)
+          `)
+          .order('id', { ascending: false })
+          .limit(200),
+        supabase.from('cat_warehouses').select('id, name').eq('is_active', true)
+      ]);
 
-      if (error) throw error;
-      setRecords(data as unknown as KardexRecord[] || []);
+      if (kardexRes.error) throw kardexRes.error;
+      if (whRes.error) throw whRes.error;
+
+      setRecords(kardexRes.data as unknown as KardexRecord[] || []);
+      setWarehouses(whRes.data || []);
     } catch (err: any) {
       setError(err.message || 'Error al cargar el Kardex');
     } finally {
@@ -50,11 +58,15 @@ export const KardexPage = () => {
     }
   };
 
-  const filteredRecords = records.filter(r => 
-    r.cat_products?.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    r.cat_products?.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.cat_warehouses?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredRecords = records.filter(r => {
+    const matchSearch =
+      r.cat_products?.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      r.cat_products?.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.cat_warehouses?.name.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchWh = selectedWarehouse === 'ALL' || r.cat_warehouses?.name === selectedWarehouse;
+    return matchSearch && matchWh;
+  });
 
   if (loading) return <div className="p-8 text-center text-slate-500">Cargando libro mayor de inventario (Kardex)...</div>;
 
@@ -80,18 +92,36 @@ export const KardexPage = () => {
 
       {/* Tabla */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Buscar producto o bodega..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-80"
-            />
+        <div className="p-4 border-b border-slate-100 flex flex-wrap gap-4 items-center justify-between bg-slate-50">
+          <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[300px]">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Buscar por producto, SKU o bodega..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="pl-9 pr-4 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-full bg-white"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Store className="w-4 h-4 text-slate-500" />
+              <select
+                value={selectedWarehouse}
+                onChange={e => setSelectedWarehouse(e.target.value)}
+                className="border border-slate-300 rounded-xl py-2 px-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium text-slate-700 shadow-sm"
+              >
+                <option value="ALL">📦 Todas las Bodegas</option>
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.name}>
+                    🏢 {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-          <p className="text-sm text-slate-500 font-medium">Mostrando últimos {filteredRecords.length} movimientos</p>
+          <p className="text-sm text-slate-500 font-medium">Mostrando {filteredRecords.length} movimientos</p>
         </div>
         
         <div className="overflow-x-auto flex-1">

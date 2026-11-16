@@ -36,6 +36,8 @@ Para levantar el proyecto y la base de datos, debes ejecutar los siguientes scri
 4. `database/updates/04_automotive_catalogs.sql`
 5. `database/updates/05_inventory_catalogs.sql`
 6. `database/updates/06_document_types.sql`
+7. `database/updates/07_default_consumidor_final.sql`
+8. `database/updates/08_oil_changes.sql`
 
 ## 💻 Desarrollo Local
 
