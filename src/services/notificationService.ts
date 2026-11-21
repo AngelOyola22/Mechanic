@@ -353,3 +353,173 @@ export const sendWhatsAppNotification = async (params: SendWhatsAppParams): Prom
     message: 'MISSING_WHATSAPP_CONFIG: No hay un proveedor de WhatsApp automático configurado.'
   };
 };
+
+export interface SendInvoiceEmailParams {
+  toEmail: string;
+  toName: string;
+  invoiceNumber: string;
+  date: string;
+  branchName?: string;
+  warehouseName?: string;
+  clientDoc?: string;
+  items: { name: string; quantity: number; unitPrice: number; total: number }[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  oilChangeData?: {
+    vehiclePlate: string;
+    vehicleBrand?: string;
+    vehicleModel?: string;
+    currentMileage: number;
+    nextChangeMileage: number;
+    oilType?: string;
+  };
+  companyName?: string;
+}
+
+export const sendInvoiceEmail = async (params: SendInvoiceEmailParams): Promise<{ success: boolean; message: string }> => {
+  const settings = await getNotificationSettings();
+
+  if (!params.toEmail || !params.toEmail.includes('@')) {
+    return { success: false, message: 'El cliente no tiene un correo electrónico válido.' };
+  }
+
+  if (!settings.resend_api_key) {
+    return {
+      success: false,
+      message: 'MISSING_API_KEY: Falta configurar la API Key de Resend en Configuración > Notificaciones.'
+    };
+  }
+
+  const senderName = settings.resend_from_name || params.companyName || 'Taller Mecánico';
+  const senderEmail = settings.resend_from_email || 'onboarding@resend.dev';
+  const subject = `🧾 Comprobante de Venta ${params.invoiceNumber} - ${senderName}`;
+
+  const itemsHtml = params.items
+    .map(
+      it => `
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-size: 13px;">${it.name}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-size: 13px;">${it.quantity}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-size: 13px;">$${it.unitPrice.toFixed(2)}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: bold; font-size: 13px;">$${it.total.toFixed(2)}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+        .container { max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .header { background: #0f172a; color: #ffffff; padding: 24px; text-align: center; }
+        .header h1 { margin: 0 0 6px 0; font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+        .header p { margin: 0; font-size: 12px; opacity: 0.8; }
+        .content { padding: 24px; }
+        .meta-box { background: #f1f5f9; border-radius: 12px; padding: 14px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th { background: #f8fafc; font-size: 11px; text-transform: uppercase; color: #64748b; padding: 8px; text-align: left; border-bottom: 2px solid #e2e8f0; }
+        .totals { margin-top: 15px; margin-left: auto; width: 220px; font-size: 13px; }
+        .totals div { display: flex; justify-content: space-between; padding: 4px 0; }
+        .grand-total { font-weight: 800; font-size: 16px; color: #4338ca; border-top: 2px solid #e2e8f0; padding-top: 6px !important; }
+        .oil-card { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 14px; margin-top: 24px; }
+        .footer { text-align: center; padding: 16px; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>${senderName}</h1>
+          <p>Comprobante Digital de Venta</p>
+        </div>
+        <div class="content">
+          <div class="meta-box">
+            <div><strong>Comprobante:</strong> ${params.invoiceNumber}</div>
+            <div><strong>Fecha:</strong> ${params.date}</div>
+            <div><strong>Cliente:</strong> ${params.toName}</div>
+            ${params.clientDoc ? `<div><strong>RUC/Cédula:</strong> ${params.clientDoc}</div>` : ''}
+            ${params.branchName ? `<div><strong>Sucursal:</strong> ${params.branchName}</div>` : ''}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Producto / Servicio</th>
+                <th style="text-align: center;">Cant.</th>
+                <th style="text-align: right;">P. Unit</th>
+                <th style="text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+          </table>
+
+          <div class="totals">
+            <div><span>Subtotal:</span><span>$${params.subtotal.toFixed(2)}</span></div>
+            <div><span>IVA:</span><span>$${params.tax.toFixed(2)}</span></div>
+            <div class="grand-total"><span>Total:</span><span>$${params.total.toFixed(2)}</span></div>
+          </div>
+
+          ${
+            params.oilChangeData
+              ? `
+            <div class="oil-card">
+              <strong style="color: #1e40af; font-size: 13px; display: block; margin-bottom: 6px;">🚗 Ficha de Mantenimiento Vehicular</strong>
+              <div style="font-size: 12px; line-height: 1.6; color: #1e3a8a;">
+                <div>• <strong>Vehículo:</strong> ${[params.oilChangeData.vehicleBrand, params.oilChangeData.vehicleModel].filter(Boolean).join(' ') || 'Vehículo'} (Placa: ${params.oilChangeData.vehiclePlate})</div>
+                <div>• <strong>Km al Servicio:</strong> ${params.oilChangeData.currentMileage.toLocaleString()} km</div>
+                <div>• <strong>Próximo Cambio Sugerido:</strong> <span style="font-weight: 800; color: #1d4ed8;">${params.oilChangeData.nextChangeMileage.toLocaleString()} km</span></div>
+                <div>• <strong>Aceite:</strong> ${params.oilChangeData.oilType || 'Sintético 5W-30'}</div>
+              </div>
+            </div>
+          `
+              : ''
+          }
+        </div>
+        <div class="footer">
+          ${senderName} • Gracias por su preferencia
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${settings.resend_api_key.trim()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: `${senderName} <${senderEmail.trim()}>`,
+        to: [params.toEmail.trim()],
+        subject,
+        html: htmlContent
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || `Error del servidor de correos (${response.status})`);
+    }
+
+    return {
+      success: true,
+      message: `Factura enviada exitosamente a ${params.toEmail}`
+    };
+  } catch (error: any) {
+    console.error('Error enviando factura por correo:', error);
+    return {
+      success: false,
+      message: error.message || 'Error desconocido al enviar factura.'
+    };
+  }
+};
+
