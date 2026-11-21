@@ -852,7 +852,7 @@ export const SalesPage = () => {
       </div>
 
       {/* Navegación por Pestañas */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 mb-6 overflow-x-auto">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 mb-6 overflow-x-auto [&>button]:whitespace-nowrap [&>button]:shrink-0">
         <button
           onClick={() => setActiveTab('proceso')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${activeTab === 'proceso'
@@ -1151,8 +1151,8 @@ export const SalesPage = () => {
 
               {/* Tabla */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
-                <div className="overflow-y-auto flex-1 p-0">
-                  <table className="w-full text-left text-sm">
+                <div className="overflow-auto flex-1 p-0">
+                  <table className="w-full min-w-[560px] text-left text-sm">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0">
                       <tr>
                         <th className="px-4 py-3 font-semibold">Producto</th>

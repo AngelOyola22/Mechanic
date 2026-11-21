@@ -16,6 +16,12 @@ export const MainLayout = () => {
   const { isAuthenticated, logout, user } = useAuth();
   const location = useLocation();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
+
+  // Cierra el menú móvil al navegar
+  useEffect(() => {
+    setIsMobileOpen(false);
+  }, [location.pathname]);
   const [companySettings, setCompanySettings] = useState<{company_name: string, logo_url: string} | null>(null);
 
   useEffect(() => {
@@ -33,10 +39,18 @@ export const MainLayout = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex">
       {/* Sidebar Dinámico basado en BD */}
+      {/* Fondo oscuro del menú móvil */}
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-30 md:hidden"
+          onClick={() => setIsMobileOpen(false)}
+        />
+      )}
+
       <aside 
-        className={`bg-slate-900 text-white shadow-xl z-10 hidden md:flex flex-col h-screen sticky top-0 transition-all duration-300 ${
-          isCollapsed ? 'w-20' : 'w-72'
-        }`}
+        className={`bg-slate-900 text-white shadow-xl flex flex-col h-screen transition-all duration-300
+          fixed inset-y-0 left-0 z-40 w-72 ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0 md:sticky md:top-0 md:z-10 ${isCollapsed ? 'md:w-20' : 'md:w-72'}`}
       >
         {/* Cabecera del Sidebar */}
         <div className={`flex items-center mb-10 p-6 ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
@@ -55,7 +69,7 @@ export const MainLayout = () => {
         {/* Botón para colapsar */}
         <button 
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="absolute top-7 right-[-12px] bg-slate-800 p-1.5 rounded-full border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors z-20"
+          className="hidden md:block absolute top-7 right-[-12px] bg-slate-800 p-1.5 rounded-full border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors z-20"
         >
           <Menu className="w-4 h-4" />
         </button>
@@ -125,9 +139,16 @@ export const MainLayout = () => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-screen overflow-hidden">
-        <header className="bg-white p-4 shadow-sm flex justify-between items-center md:hidden border-b border-slate-200">
-          <h2 className="font-bold text-xl text-slate-800 flex items-center gap-2">
+      <main className="flex-1 min-w-0 flex flex-col min-h-screen overflow-hidden">
+        <header className="bg-white p-3 shadow-sm flex justify-between items-center md:hidden border-b border-slate-200 sticky top-0 z-20">
+          <button
+            onClick={() => setIsMobileOpen(true)}
+            className="p-2 text-slate-700 hover:bg-slate-100 rounded-lg mr-1"
+            aria-label="Abrir menú"
+          >
+            <Menu className="w-6 h-6" />
+          </button>
+          <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2 flex-1 min-w-0 truncate">
             {companySettings?.logo_url ? (
               <img src={companySettings.logo_url} alt="Logo" className="w-8 h-8 rounded-md object-cover" />
             ) : (
@@ -140,7 +161,7 @@ export const MainLayout = () => {
           </button>
         </header>
         
-        <div className="flex-1 p-8 overflow-auto">
+        <div className="flex-1 p-3 sm:p-5 md:p-8 overflow-auto">
           <div className="max-w-7xl mx-auto h-full">
             <Outlet />
           </div>
