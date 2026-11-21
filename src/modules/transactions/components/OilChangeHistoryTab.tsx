@@ -4,7 +4,8 @@ import { supabase } from '../../../config/supabase';
 import {
   Car, Search, Calendar, Phone, Mail, Clock, AlertTriangle, CheckCircle2,
   Send, Copy, Check, Plus, MessageCircle, FileText, ArrowRight, Gauge, Wrench, RefreshCw,
-  Pencil, Save, ExternalLink, Settings as SettingsIcon, Loader2, Filter, Eye, X, ChevronDown, ChevronUp
+  Pencil, Save, ExternalLink, Settings as SettingsIcon, Loader2, Filter, Eye, X, ChevronDown, ChevronUp,
+  LayoutGrid, List
 } from 'lucide-react';
 import { Modal } from '../../../components/ui/Modal';
 import { Pagination } from '../../../components/ui/Pagination';
@@ -43,7 +44,8 @@ export const OilChangeHistoryTab: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DUE' | 'SOON' | 'OK'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
-  const PAGE_SIZE = 6;
+  const PAGE_SIZE = 12;
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
 
   // Filtros Avanzados (Fecha, Cliente, Cédula, Placa)
   const [filterClientName, setFilterClientName] = useState('');
@@ -978,6 +980,30 @@ export const OilChangeHistoryTab: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Selector de Vista: Tarjetas Compactas vs Tabla */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Vista en Tarjetas Compactas"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  viewMode === 'table' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Vista en Tabla / Lista (Máximo espacio)"
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={() => loadOilChanges()}
@@ -1089,40 +1115,142 @@ export const OilChangeHistoryTab: React.FC = () => {
             Registrar Primer Mantenimiento
           </button>
         </div>
+      ) : viewMode === 'table' ? (
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-3">Placa</th>
+                  <th className="py-2.5 px-3">Vehículo</th>
+                  <th className="py-2.5 px-3">Cliente / Cédula</th>
+                  <th className="py-2.5 px-3">Fecha Servicio</th>
+                  <th className="py-2.5 px-3 text-right">Km Servicio</th>
+                  <th className="py-2.5 px-3 text-right">Próximo Cambio</th>
+                  <th className="py-2.5 px-3 text-center">Estado</th>
+                  <th className="py-2.5 px-3 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {paginatedRecords.map(record => {
+                  const status = getRecordStatus(record);
+                  return (
+                    <tr key={record.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-2.5 px-3">
+                        <span className="bg-slate-900 text-yellow-400 font-mono font-black text-[11px] px-2 py-0.5 rounded border border-slate-800 tracking-wider inline-flex items-center gap-1">
+                          <span className="text-[7px] text-white font-sans font-bold">EC</span>
+                          {record.vehicle_plate}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-slate-800 truncate max-w-[150px]">
+                          {[record.vehicle_brand, record.vehicle_model].filter(Boolean).join(' ') || 'Vehículo'}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {record.oil_type || 'Sintético'}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-semibold text-slate-800 truncate max-w-[160px]">{record.client_name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{record.client_document_id || 'Consumidor'}</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-600">
+                        {new Date(record.service_date).toLocaleDateString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">
+                        {record.current_mileage.toLocaleString()} km
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-indigo-600">
+                        {record.next_change_mileage.toLocaleString()} km
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
+                            status.color === 'red'
+                              ? 'bg-red-50 text-red-700 border border-red-200'
+                              : status.color === 'amber'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}
+                        >
+                          {status.code === 'DUE' ? 'Vencido' : status.code === 'SOON' ? 'Próximo' : 'Al Día'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedDetailRecord(record);
+                              setIsDetailModalOpen(true);
+                            }}
+                            className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            title="Ver Detalle y Odómetro"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>Ver</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSendWhatsAppDirect(record)}
+                            disabled={sendingWhatsAppId === record.id}
+                            className="p-1 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                            title="Enviar WhatsApp"
+                          >
+                            {sendingWhatsAppId === record.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <MessageCircle className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(record)}
+                            className="p-1 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="Editar"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {paginatedRecords.map(record => {
             const status = getRecordStatus(record);
-            const liveKm = customMileages[record.id] !== undefined ? customMileages[record.id] : record.current_mileage;
 
             return (
               <div
                 key={record.id}
-                className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between hover:border-indigo-300 hover:shadow-md transition-all space-y-3"
+                className="bg-white rounded-xl border border-slate-200 shadow-xs hover:shadow-md hover:border-indigo-300 p-3 flex flex-col justify-between transition-all gap-2"
               >
                 {/* Header: Placa + Carro + Estado */}
-                <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {/* Ecuadorian Style License Plate Badge */}
-                    <div className="bg-slate-900 text-yellow-400 font-mono font-black text-xs px-2.5 py-1 rounded-md border border-slate-800 tracking-wider shadow-sm flex items-center gap-1 shrink-0">
-                      <span className="text-[8px] text-white font-sans font-bold uppercase">EC</span>
+                <div className="flex items-center justify-between gap-1.5 border-b border-slate-100 pb-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="bg-slate-900 text-yellow-400 font-mono font-black text-[11px] px-1.5 py-0.5 rounded border border-slate-800 tracking-wider shadow-xs flex items-center gap-0.5 shrink-0">
+                      <span className="text-[7px] text-white font-sans font-bold">EC</span>
                       <span>{record.vehicle_plate}</span>
                     </div>
 
                     <div className="min-w-0">
-                      <h4 className="font-bold text-slate-900 text-sm truncate leading-tight">
+                      <h4 className="font-bold text-slate-900 text-xs truncate leading-tight">
                         {[record.vehicle_brand, record.vehicle_model].filter(Boolean).join(' ') || 'Vehículo'}
                       </h4>
-                      <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                        {record.vehicle_year ? `Año ${record.vehicle_year} • ` : ''}
-                        {record.oil_type || 'Sintético 5W-30'}
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {record.vehicle_year ? `${record.vehicle_year} • ` : ''}
+                        {record.oil_type || 'Sintético'}
                       </p>
                     </div>
                   </div>
 
-                  {/* Status Badge */}
                   <span
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
+                    className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0 ${
                       status.color === 'red'
                         ? 'bg-red-50 text-red-700 border border-red-200'
                         : status.color === 'amber'
@@ -1130,74 +1258,59 @@ export const OilChangeHistoryTab: React.FC = () => {
                         : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                     }`}
                   >
-                    {status.color === 'red' && <AlertTriangle className="w-2.5 h-2.5" />}
-                    {status.color === 'amber' && <Clock className="w-2.5 h-2.5" />}
-                    {status.color === 'emerald' && <CheckCircle2 className="w-2.5 h-2.5" />}
                     {status.code === 'DUE' ? 'Vencido' : status.code === 'SOON' ? 'Próximo' : 'Al Día'}
                   </span>
                 </div>
 
-                {/* Cliente e Identificación */}
-                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 space-y-1 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-[11px] font-medium">Cliente:</span>
-                    <strong className="text-slate-800 text-xs truncate max-w-[170px]">{record.client_name}</strong>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-400">Cédula/RUC:</span>
-                    <span className="text-slate-600 font-mono">{record.client_document_id || 'Consumidor'}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/50">
-                    <span className="text-slate-400">Fecha servicio:</span>
-                    <span className="text-slate-700 font-medium">{new Date(record.service_date).toLocaleDateString()}</span>
-                  </div>
+                {/* Cliente y Fecha en una línea limpia */}
+                <div className="text-[11px] text-slate-600 flex items-center justify-between">
+                  <span className="truncate max-w-[140px] font-medium text-slate-700" title={record.client_name}>
+                    👤 {record.client_name}
+                  </span>
+                  <span className="text-[10px] text-slate-400 shrink-0 font-mono">
+                    {new Date(record.service_date).toLocaleDateString()}
+                  </span>
                 </div>
 
-                {/* Resumen Compacto de Kilometraje */}
-                <div className="bg-indigo-50/40 rounded-xl p-2.5 border border-indigo-100/80 space-y-1.5">
-                  <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                    <div className="bg-white p-1.5 rounded-lg border border-indigo-50">
-                      <span className="text-slate-400 block text-[9px] uppercase font-bold">Servicio</span>
-                      <strong className="text-slate-800 font-mono text-xs">{record.current_mileage.toLocaleString()} km</strong>
-                    </div>
-                    <div className="bg-white p-1.5 rounded-lg border border-indigo-50">
-                      <span className="text-slate-400 block text-[9px] uppercase font-bold">Próximo</span>
-                      <strong className="text-indigo-600 font-mono text-xs">{record.next_change_mileage.toLocaleString()} km</strong>
-                    </div>
+                {/* Resumen de Kilometraje en una sola fila compacta */}
+                <div className="bg-slate-50/80 rounded-lg px-2 py-1.5 border border-slate-100 text-[10px] flex items-center justify-between">
+                  <div className="text-slate-600 font-mono">
+                    <span>{record.current_mileage.toLocaleString()}</span>
+                    <span className="text-slate-400 mx-1">→</span>
+                    <strong className="text-indigo-700 font-bold">{record.next_change_mileage.toLocaleString()} km</strong>
                   </div>
-
-                  <div className="text-center text-[11px] font-semibold">
+                  <div className="font-semibold text-right">
                     {status.diff > 0 ? (
                       <span className={status.color === 'amber' ? 'text-amber-700' : 'text-slate-600'}>
-                        Faltan <strong>{status.diff.toLocaleString()} km</strong> para el cambio
+                        Faltan {status.diff.toLocaleString()} km
                       </span>
                     ) : (
                       <span className="text-red-600 font-bold">
-                        ¡Excedido por {Math.abs(status.diff).toLocaleString()} km!
+                        +{Math.abs(status.diff).toLocaleString()} km
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Acciones: Botón Ver Detalle Principal + Acciones Rápidas */}
-                <div className="flex items-center gap-1.5 pt-1">
+                {/* Botón Principal Compacto + Botones Rápidos */}
+                <div className="flex items-center gap-1.5 pt-0.5">
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedDetailRecord(record);
                       setIsDetailModalOpen(true);
                     }}
-                    className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-indigo-600/20 transition-all cursor-pointer"
+                    className="flex-1 py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition-colors cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    <span>Ver Detalle y Odómetro</span>
+                    <span>Ver Detalle</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleSendWhatsAppDirect(record)}
                     disabled={sendingWhatsAppId === record.id}
-                    className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl transition-colors cursor-pointer"
+                    className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
                     title="Enviar WhatsApp"
                   >
                     {sendingWhatsAppId === record.id ? (
@@ -1210,7 +1323,7 @@ export const OilChangeHistoryTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => openEditModal(record)}
-                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
+                    className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
                     title="Editar Registro"
                   >
                     <Pencil className="w-3.5 h-3.5" />
