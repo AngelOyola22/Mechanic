@@ -523,3 +523,102 @@ export const sendInvoiceEmail = async (params: SendInvoiceEmailParams): Promise<
   }
 };
 
+export interface SendInvoiceWhatsAppParams {
+  phone: string;
+  clientName: string;
+  clientDoc?: string;
+  invoiceNumber: string;
+  date: string;
+  branchName?: string;
+  items: {
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    total: number;
+  }[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  oilChangeData?: {
+    vehiclePlate: string;
+    vehicleBrand?: string;
+    vehicleModel?: string;
+    currentMileage: number;
+    nextChangeMileage: number;
+    oilType?: string;
+  };
+  companyName?: string;
+}
+
+export const formatInvoiceWhatsAppText = (params: SendInvoiceWhatsAppParams): string => {
+  const company = params.companyName || 'TALLER MECÁNICO';
+  let text = `🧾 *COMPROBANTE DE VENTA ELECTRÓNICO*\n`;
+  text += `*${company}*\n`;
+  text += `------------------------------------\n`;
+  text += `*N° Factura:* ${params.invoiceNumber}\n`;
+  text += `*Fecha:* ${params.date}\n`;
+  if (params.branchName) text += `*Sucursal:* ${params.branchName}\n`;
+  text += `*Cliente:* ${params.clientName}\n`;
+  if (params.clientDoc) text += `*RUC/C.I.:* ${params.clientDoc}\n`;
+  text += `------------------------------------\n`;
+  text += `*DETALLE DE PRODUCTOS / SERVICIOS:*\n`;
+  params.items.forEach(it => {
+    text += `• ${it.quantity}x ${it.name} - $${it.total.toFixed(2)}\n`;
+  });
+  text += `------------------------------------\n`;
+  text += `*Subtotal:* $${params.subtotal.toFixed(2)}\n`;
+  text += `*IVA:* $${params.tax.toFixed(2)}\n`;
+  text += `*TOTAL COBRADO:* $${params.total.toFixed(2)}\n`;
+
+  if (params.oilChangeData) {
+    const vText = [params.oilChangeData.vehicleBrand, params.oilChangeData.vehicleModel].filter(Boolean).join(' ') || 'Vehículo';
+    text += `------------------------------------\n`;
+    text += `🚗 *CONTROL DE MANTENIMIENTO VEHICULAR*\n`;
+    text += `*Vehículo:* ${vText} (Placa: ${params.oilChangeData.vehiclePlate})\n`;
+    text += `*Km Actual:* ${params.oilChangeData.currentMileage.toLocaleString()} km\n`;
+    text += `*Próximo Cambio:* ${params.oilChangeData.nextChangeMileage.toLocaleString()} km\n`;
+    if (params.oilChangeData.oilType) text += `*Aceite:* ${params.oilChangeData.oilType}\n`;
+  }
+
+  text += `------------------------------------\n`;
+  text += `¡Gracias por su preferencia!`;
+  return text;
+};
+
+export const sendInvoiceWhatsApp = async (
+  params: SendInvoiceWhatsAppParams
+): Promise<{ success: boolean; message: string; webFallbackUrl?: string }> => {
+  const text = formatInvoiceWhatsAppText(params);
+  const cleanPhone = formatEcuadorianPhone(params.phone);
+  const webFallbackUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+
+  if (!cleanPhone || cleanPhone.length < 9) {
+    return {
+      success: false,
+      message: 'El cliente no tiene un teléfono válido para WhatsApp.',
+      webFallbackUrl
+    };
+  }
+
+  const settings = await getNotificationSettings();
+
+  // Si está en modo manual o no hay API configurada, abrir fallback web directamente
+  if (settings.whatsapp_provider === 'manual') {
+    return {
+      success: true,
+      message: 'Abriendo WhatsApp Web...',
+      webFallbackUrl
+    };
+  }
+
+  const res = await sendWhatsAppNotification({
+    phone: cleanPhone,
+    message: text
+  });
+
+  return {
+    ...res,
+    webFallbackUrl
+  };
+};
+

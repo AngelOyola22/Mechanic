@@ -3,7 +3,7 @@ import { supabase } from '../../../config/supabase';
 import {
   ShoppingCart, Search, Plus, Trash2, Save, Store, UserCheck, AlertCircle, CheckCircle2,
   FileText, BarChart3, List, Phone, Mail, MapPin, User, Check, ChevronDown, X, Printer,
-  Car, Wrench, Gauge, Loader2
+  Car, Wrench, Gauge, Loader2, MessageCircle
 } from 'lucide-react';
 import { usePermissions } from '../../../context/AuthContext';
 import { useAuth } from '../../../context/AuthContext';
@@ -13,7 +13,7 @@ import { OilChangeHistoryTab } from '../components/OilChangeHistoryTab';
 import { Modal } from '../../../components/ui/Modal';
 import { Pagination } from '../../../components/ui/Pagination';
 import { printThermalTicket } from '../../../utils/printTicket';
-import { sendInvoiceEmail } from '../../../services/notificationService';
+import { sendInvoiceEmail, sendInvoiceWhatsApp } from '../../../services/notificationService';
 
 // --- Types ---
 interface Client {
@@ -40,6 +40,7 @@ interface CompletedSale {
   clientName: string;
   clientDoc: string;
   clientEmail?: string;
+  clientPhone?: string;
   clientId?: number;
   branchName: string;
   warehouseName: string;
@@ -160,6 +161,7 @@ export const SalesPage = () => {
   const [isSaleCompletedModalOpen, setIsSaleCompletedModalOpen] = useState(false);
   const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
   const [sendingInvoiceEmail, setSendingInvoiceEmail] = useState(false);
+  const [sendingInvoiceWhatsApp, setSendingInvoiceWhatsApp] = useState(false);
   const [invoiceEmailStatus, setInvoiceEmailStatus] = useState<string | null>(null);
 
   const handlePrintCompletedSale = (sale: CompletedSale) => {
@@ -239,6 +241,66 @@ export const SalesPage = () => {
       setInvoiceEmailStatus(`❌ Error: ${err.message}`);
     } finally {
       setSendingInvoiceEmail(false);
+    }
+  };
+
+  const handleSendCompletedSaleWhatsApp = async (sale: CompletedSale) => {
+    let phone = sale.clientPhone;
+    if (!phone) {
+      const input = window.prompt(`Ingrese el número de celular para enviar la factura por WhatsApp a ${sale.clientName}:`, '');
+      if (!input || input.trim().length < 8) return;
+      phone = input.trim();
+      if (sale.clientId) {
+        try {
+          await supabase.from('cat_clients').update({ phone }).eq('id', sale.clientId);
+        } catch (e) { }
+      }
+    }
+
+    try {
+      setSendingInvoiceWhatsApp(true);
+      setInvoiceEmailStatus('Enviando factura por WhatsApp...');
+      const res = await sendInvoiceWhatsApp({
+        phone,
+        clientName: sale.clientName,
+        clientDoc: sale.clientDoc,
+        invoiceNumber: sale.invoiceNumber,
+        date: sale.date,
+        branchName: sale.branchName,
+        items: sale.items,
+        subtotal: sale.subtotal,
+        tax: sale.tax,
+        total: sale.total,
+        oilChangeData: sale.oilChangeData
+          ? {
+            vehiclePlate: sale.oilChangeData.vehiclePlate,
+            vehicleBrand: sale.oilChangeData.vehicleBrand,
+            vehicleModel: sale.oilChangeData.vehicleModel,
+            currentMileage: sale.oilChangeData.currentMileage,
+            nextChangeMileage: sale.oilChangeData.nextChangeMileage,
+            oilType: sale.oilChangeData.oilType
+          }
+          : undefined
+      });
+
+      if (res.success) {
+        setInvoiceEmailStatus(`✅ ${res.message}`);
+        if (res.webFallbackUrl && res.message.includes('WhatsApp Web')) {
+          window.open(res.webFallbackUrl, '_blank');
+        }
+        setTimeout(() => setInvoiceEmailStatus(null), 5000);
+      } else {
+        if (res.webFallbackUrl) {
+          window.open(res.webFallbackUrl, '_blank');
+          setInvoiceEmailStatus(`✅ Abriendo WhatsApp para enviar comprobante a ${phone}`);
+        } else {
+          setInvoiceEmailStatus(`❌ ${res.message}`);
+        }
+      }
+    } catch (err: any) {
+      setInvoiceEmailStatus(`❌ Error WhatsApp: ${err.message}`);
+    } finally {
+      setSendingInvoiceWhatsApp(false);
     }
   };
 
@@ -783,6 +845,7 @@ export const SalesPage = () => {
         clientName: clientObj?.name || 'Consumidor Final',
         clientDoc: clientObj?.document_id || '9999999999999',
         clientEmail: clientObj?.email || '',
+        clientPhone: clientObj?.phone || '',
         clientId: clientObj?.id,
         branchName: branchObj?.name || 'Matriz Principal',
         warehouseName: whObj?.name || 'Bodega Principal',
@@ -1936,11 +1999,11 @@ export const SalesPage = () => {
                 )}
 
                 {/* Botones de Acción */}
-                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2">
                   <button
                     type="button"
                     onClick={() => handlePrintCompletedSale(completedSale)}
-                    className="w-full sm:flex-1 py-3 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 transition-all cursor-pointer"
+                    className="py-3 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
                   >
                     <Printer className="w-4 h-4" />
                     Imprimir Ticket
@@ -1948,22 +2011,36 @@ export const SalesPage = () => {
 
                   <button
                     type="button"
+                    disabled={sendingInvoiceWhatsApp}
+                    onClick={() => handleSendCompletedSaleWhatsApp(completedSale)}
+                    className="py-3 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all cursor-pointer"
+                  >
+                    {sendingInvoiceWhatsApp ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <MessageCircle className="w-4 h-4" />
+                    )}
+                    Enviar WhatsApp
+                  </button>
+
+                  <button
+                    type="button"
                     disabled={sendingInvoiceEmail}
                     onClick={() => handleSendCompletedSaleEmail(completedSale)}
-                    className="w-full sm:flex-1 py-3 px-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 transition-all cursor-pointer"
+                    className="py-3 px-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/25 transition-all cursor-pointer"
                   >
                     {sendingInvoiceEmail ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <Mail className="w-4 h-4" />
                     )}
-                    Enviar Factura Correo
+                    Enviar Correo
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setIsSaleCompletedModalOpen(false)}
-                    className="w-full sm:w-auto py-3 px-4 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                    className="py-3 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/25 transition-all cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     Nueva Venta
