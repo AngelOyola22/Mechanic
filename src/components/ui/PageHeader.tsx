@@ -21,9 +21,9 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   actionButton,
 }) => {
   return (
-    <div className="flex justify-between items-end">
+    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-3">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-800 flex items-center gap-2">
           {icon && <span className="text-blue-600">{icon}</span>}
           {title}
         </h1>
@@ -34,7 +34,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
           onClick={actionButton.onClick}
           disabled={actionButton.disabled}
           title={actionButton.disabled ? actionButton.disabledTitle : ''}
-          className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-colors shadow-sm font-medium ${
+          className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 w-full sm:w-auto transition-colors shadow-sm font-medium ${
             actionButton.disabled
               ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-70'
               : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20'

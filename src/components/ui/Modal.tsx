@@ -28,10 +28,10 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className={`bg-white rounded-2xl shadow-xl w-full ${maxWidthClasses[maxWidth]} overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}>
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
-          <h2 className="text-xl font-bold text-slate-800">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={`bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full ${maxWidthClasses[maxWidth]} overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh] animate-in zoom-in-95 duration-200`}>
+        <div className="p-4 sm:p-6 border-b border-slate-100 flex justify-between items-center gap-3 bg-slate-50 shrink-0">
+          <h2 className="text-lg sm:text-xl font-bold text-slate-800 min-w-0">
             {title}
           </h2>
           <button 
