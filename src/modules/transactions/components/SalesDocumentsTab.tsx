@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../config/supabase';
-import { Search, Eye, Printer, Calendar, RefreshCw, FileText, CheckCircle2 } from 'lucide-react';
+import { Search, Eye, Printer, Calendar, RefreshCw, FileText, CheckCircle2, Mail, Loader2, MessageCircle, Send, Smartphone, Check } from 'lucide-react';
 import { Modal } from '../../../components/ui/Modal';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { Pagination } from '../../../components/ui/Pagination';
+import { printThermalTicket } from '../../../utils/printTicket';
+import { sendInvoiceEmail, sendInvoiceWhatsApp } from '../../../services/notificationService';
 
 export interface SaleDetailItem {
   id: number;
@@ -46,7 +48,7 @@ export const SalesDocumentsTab: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
-  
+
   // Fechas (por defecto: mes actual)
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -58,6 +60,17 @@ export const SalesDocumentsTab: React.FC = () => {
   // Modal Detalle
   const [selectedSale, setSelectedSale] = useState<SaleRecord | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [sendingEmailId, setSendingEmailId] = useState<number | null>(null);
+  const [sendingWhatsAppId, setSendingWhatsAppId] = useState<number | null>(null);
+  const [emailAlert, setEmailAlert] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Modal para Elegir Canal de Envío (WhatsApp o Correo)
+  const [isSendModalOpen, setIsSendModalOpen] = useState(false);
+  const [sendTargetSale, setSendTargetSale] = useState<SaleRecord | null>(null);
+  const [sendChannel, setSendChannel] = useState<'whatsapp' | 'email'>('whatsapp');
+  const [sendPhone, setSendPhone] = useState('');
+  const [sendEmail, setSendEmail] = useState('');
+  const [isSubmittingSend, setIsSubmittingSend] = useState(false);
 
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
@@ -146,108 +159,223 @@ export const SalesDocumentsTab: React.FC = () => {
   const totalPages = Math.ceil(filteredSales.length / PAGE_SIZE);
   const paginatedSales = filteredSales.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
-  const handlePrint = (sale: SaleRecord) => {
-    const printWindow = window.open('', '_blank', 'width=600,height=700');
-    if (!printWindow) return;
-
-    const itemsHtml = (sale.tra_sale_details || [])
-      .map(
-        d => `
-        <tr>
-          <td style="padding: 6px 4px; border-bottom: 1px dashed #ddd;">${d.cat_products?.name || 'Item'}</td>
-          <td style="text-align: center; padding: 6px 4px; border-bottom: 1px dashed #ddd;">${d.quantity}</td>
-          <td style="text-align: right; padding: 6px 4px; border-bottom: 1px dashed #ddd;">$${d.unit_price.toFixed(2)}</td>
-          <td style="text-align: right; padding: 6px 4px; border-bottom: 1px dashed #ddd;">$${(d.quantity * d.unit_price).toFixed(2)}</td>
-        </tr>
-      `
-      )
-      .join('');
-
-    const now = new Date();
-
-    // Check if there is an oil change record for this sale
-    let oilDataHtml = '';
+  const getOilDataForSale = (sale: SaleRecord) => {
     try {
       const localOil: any[] = JSON.parse(localStorage.getItem('sys_tra_oil_changes_backup') || '[]');
       const match = localOil.find(o => o.sale_id === sale.id || (sale.invoice_number && o.invoice_number === sale.invoice_number));
       if (match) {
-        oilDataHtml = `
-          <div style="margin-top: 15px; border: 2px dashed #111; padding: 8px; text-align: center; border-radius: 4px;">
-            <div style="font-weight: bold; font-size: 13px;">🚗 RECORDATORIO DE CAMBIO DE ACEITE</div>
-            <div style="margin-top: 4px;">Vehículo: <strong>${[match.vehicle_brand, match.vehicle_model].filter(Boolean).join(' ')} (${match.vehicle_plate})</strong></div>
-            <div>Km Actual: <strong>${match.current_mileage?.toLocaleString()} km</strong></div>
-            <div style="font-size: 14px; font-weight: bold; margin-top: 4px; color: #000;">
-              PRÓXIMO CAMBIO: ${match.next_change_mileage?.toLocaleString()} km
-            </div>
-            <div>Aceite: ${match.oil_type || 'Sintético'}</div>
-          </div>
-        `;
+        return {
+          vehiclePlate: match.vehicle_plate,
+          vehicleBrand: match.vehicle_brand,
+          vehicleModel: match.vehicle_model,
+          currentMileage: match.current_mileage,
+          nextChangeMileage: match.next_change_mileage,
+          oilType: match.oil_type
+        };
       }
-    } catch (e) {}
+    } catch (e) { }
+    return undefined;
+  };
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Comprobante ${sale.invoice_number}</title>
-          <style>
-            body { font-family: monospace; padding: 20px; font-size: 13px; color: #111; }
-            .header { text-align: center; margin-bottom: 15px; }
-            .title { font-size: 16px; font-weight: bold; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            .totals { margin-top: 15px; border-top: 1px dashed #333; padding-top: 8px; text-align: right; }
-            .totals div { margin: 4px 0; }
-            .bold { font-weight: bold; font-size: 15px; }
-            .footer { text-align: center; margin-top: 25px; font-size: 11px; color: #666; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="title">TALLER MECÁNICO</div>
-            <div>Sucursal: ${sale.cat_branches?.name || 'Matriz'}</div>
-            <div><strong>Comprobante: ${sale.invoice_number}</strong></div>
-            <div>Fecha: ${new Date(sale.created_at).toLocaleString()}</div>
-          </div>
-          <div><strong>Cliente:</strong> ${sale.cat_clients?.name || 'Consumidor Final'}</div>
-          <div><strong>Identificación:</strong> ${sale.cat_clients?.document_id || '9999999999999'}</div>
-          ${sale.cat_clients?.address ? `<div><strong>Dirección:</strong> ${sale.cat_clients.address}</div>` : ''}
+  const handlePrint = (sale: SaleRecord) => {
+    const oilData = getOilDataForSale(sale);
+    const items = (sale.tra_sale_details || []).map(d => ({
+      name: d.cat_products?.name || 'Item',
+      quantity: d.quantity,
+      unitPrice: d.unit_price,
+      total: d.quantity * d.unit_price
+    }));
 
-          <table>
-            <thead>
-              <tr style="border-bottom: 1px solid #333; text-align: left;">
-                <th style="padding: 4px;">Producto</th>
-                <th style="text-align: center; padding: 4px;">Cant</th>
-                <th style="text-align: right; padding: 4px;">P.Unit</th>
-                <th style="text-align: right; padding: 4px;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
+    printThermalTicket({
+      branchName: sale.cat_branches?.name || 'Matriz',
+      warehouseName: 'Bodega Principal',
+      invoiceNumber: sale.invoice_number,
+      date: new Date(sale.created_at).toLocaleString(),
+      clientName: sale.cat_clients?.name || 'Consumidor Final',
+      clientDoc: sale.cat_clients?.document_id || '9999999999999',
+      items,
+      subtotal: sale.subtotal,
+      tax: sale.tax_amount,
+      total: sale.total_amount,
+      oilChangeData: oilData
+    });
+  };
 
-          <div class="totals">
-            <div>Subtotal: $${sale.subtotal.toFixed(2)}</div>
-            <div>IVA: $${sale.tax_amount.toFixed(2)}</div>
-            <div class="bold">TOTAL: $${sale.total_amount.toFixed(2)}</div>
-          </div>
+  const openSendModal = (sale: SaleRecord, defaultChannel: 'whatsapp' | 'email' = 'whatsapp') => {
+    setSendTargetSale(sale);
+    setSendChannel(defaultChannel);
+    setSendPhone(sale.cat_clients?.phone || '');
+    setSendEmail(sale.cat_clients?.email || '');
+    setIsSendModalOpen(true);
+  };
 
-          ${oilDataHtml}
+  const handleSendEmail = async (sale: SaleRecord, overrideEmail?: string) => {
+    let email = overrideEmail || sale.cat_clients?.email;
+    if (!email || !email.includes('@')) {
+      openSendModal(sale, 'email');
+      return;
+    }
 
-          <div class="footer">
-            <p>¡Gracias por su preferencia!</p>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-    }, 250);
+    try {
+      setSendingEmailId(sale.id);
+      setEmailAlert(null);
+
+      const items = (sale.tra_sale_details || []).map(d => ({
+        name: d.cat_products?.name || 'Item',
+        quantity: d.quantity,
+        unitPrice: d.unit_price,
+        total: d.quantity * d.unit_price
+      }));
+
+      const res = await sendInvoiceEmail({
+        toEmail: email,
+        toName: sale.cat_clients?.name || 'Cliente',
+        invoiceNumber: sale.invoice_number,
+        date: new Date(sale.created_at).toLocaleString(),
+        branchName: sale.cat_branches?.name || 'Matriz',
+        warehouseName: 'Bodega Principal',
+        clientDoc: sale.cat_clients?.document_id || '9999999999999',
+        items,
+        subtotal: sale.subtotal,
+        tax: sale.tax_amount,
+        total: sale.total_amount,
+        oilChangeData: getOilDataForSale(sale)
+      });
+
+      if (res.success) {
+        setEmailAlert({ type: 'success', text: `✅ Factura enviada con éxito a ${email}` });
+        setTimeout(() => setEmailAlert(null), 5000);
+      } else {
+        setEmailAlert({ type: 'error', text: `❌ ${res.message}` });
+      }
+    } catch (err: any) {
+      setEmailAlert({ type: 'error', text: `❌ Error: ${err.message}` });
+    } finally {
+      setSendingEmailId(null);
+    }
+  };
+
+  const handleSendWhatsApp = async (sale: SaleRecord, overridePhone?: string) => {
+    let phone = overridePhone || sale.cat_clients?.phone;
+    if (!phone) {
+      openSendModal(sale, 'whatsapp');
+      return;
+    }
+
+    try {
+      setSendingWhatsAppId(sale.id);
+      setEmailAlert(null);
+
+      const items = (sale.tra_sale_details || []).map(d => ({
+        name: d.cat_products?.name || 'Item',
+        quantity: d.quantity,
+        unitPrice: d.unit_price,
+        total: d.quantity * d.unit_price
+      }));
+
+      const res = await sendInvoiceWhatsApp({
+        phone,
+        clientName: sale.cat_clients?.name || 'Cliente',
+        clientDoc: sale.cat_clients?.document_id || '9999999999999',
+        invoiceNumber: sale.invoice_number,
+        date: new Date(sale.created_at).toLocaleString(),
+        branchName: sale.cat_branches?.name || 'Matriz',
+        items,
+        subtotal: sale.subtotal,
+        tax: sale.tax_amount,
+        total: sale.total_amount,
+        oilChangeData: getOilDataForSale(sale)
+      });
+
+      if (res.success) {
+        setEmailAlert({ type: 'success', text: `✅ ${res.message}` });
+        if (res.webFallbackUrl && res.message.includes('WhatsApp Web')) {
+          window.open(res.webFallbackUrl, '_blank');
+        }
+        setTimeout(() => setEmailAlert(null), 5000);
+      } else {
+        if (res.webFallbackUrl) {
+          window.open(res.webFallbackUrl, '_blank');
+          setEmailAlert({ type: 'success', text: `✅ Abriendo WhatsApp para enviar a ${phone}` });
+        } else {
+          setEmailAlert({ type: 'error', text: `❌ ${res.message}` });
+        }
+      }
+    } catch (err: any) {
+      setEmailAlert({ type: 'error', text: `❌ Error WhatsApp: ${err.message}` });
+    } finally {
+      setSendingWhatsAppId(null);
+    }
+  };
+
+  const handleConfirmSendModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sendTargetSale) return;
+
+    setIsSubmittingSend(true);
+    try {
+      if (sendChannel === 'whatsapp') {
+        if (!sendPhone.trim()) {
+          setEmailAlert({ type: 'error', text: 'Ingrese un número de teléfono celular para WhatsApp.' });
+          return;
+        }
+        if (sendTargetSale.cat_clients?.id && sendPhone !== sendTargetSale.cat_clients.phone) {
+          try {
+            await supabase.from('cat_clients').update({ phone: sendPhone.trim() }).eq('id', sendTargetSale.cat_clients.id);
+            setSales(prev => prev.map(s => {
+              if (s.cat_clients && s.cat_clients.id === sendTargetSale.cat_clients?.id) {
+                return { ...s, cat_clients: { ...s.cat_clients, phone: sendPhone.trim() } };
+              }
+              return s;
+            }));
+          } catch (e) { }
+        }
+        await handleSendWhatsApp(sendTargetSale, sendPhone.trim());
+      } else {
+        if (!sendEmail.trim() || !sendEmail.includes('@')) {
+          setEmailAlert({ type: 'error', text: 'Ingrese un correo electrónico válido.' });
+          return;
+        }
+        if (sendTargetSale.cat_clients?.id && sendEmail !== sendTargetSale.cat_clients.email) {
+          try {
+            await supabase.from('cat_clients').update({ email: sendEmail.trim() }).eq('id', sendTargetSale.cat_clients.id);
+            setSales(prev => prev.map(s => {
+              if (s.cat_clients && s.cat_clients.id === sendTargetSale.cat_clients?.id) {
+                return { ...s, cat_clients: { ...s.cat_clients, email: sendEmail.trim() } };
+              }
+              return s;
+            }));
+          } catch (e) { }
+        }
+        await handleSendEmail(sendTargetSale, sendEmail.trim());
+      }
+      setIsSendModalOpen(false);
+    } finally {
+      setIsSubmittingSend(false);
+    }
   };
 
   return (
     <div className="space-y-6">
+      {/* Alerta de notificación por correo */}
+      {emailAlert && (
+        <div
+          className={`p-4 rounded-2xl border flex items-center justify-between gap-3 text-sm font-semibold transition-all shadow-sm ${emailAlert.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : 'bg-red-50 text-red-800 border-red-200'
+            }`}
+        >
+          <span>{emailAlert.text}</span>
+          <button
+            type="button"
+            onClick={() => setEmailAlert(null)}
+            className="text-xs opacity-60 hover:opacity-100 font-bold px-2 py-1 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Filtros */}
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
@@ -389,23 +517,58 @@ export const SalesDocumentsTab: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
+                      <div className="flex items-center justify-center gap-1">
                         <button
                           onClick={() => {
                             setSelectedSale(sale);
                             setIsDetailOpen(true);
                           }}
                           title="Ver Detalle"
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
+
                         <button
                           onClick={() => handlePrint(sale)}
-                          title="Reimprimir Ticket"
-                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Imprimir Ticket Térmico (40 col)"
+                          className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                         >
                           <Printer className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          disabled={sendingWhatsAppId === sale.id}
+                          onClick={() => handleSendWhatsApp(sale)}
+                          title="Enviar Factura por WhatsApp"
+                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          {sendingWhatsAppId === sale.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                          ) : (
+                            <MessageCircle className="w-4 h-4" />
+                          )}
+                        </button>
+
+                        <button
+                          disabled={sendingEmailId === sale.id}
+                          onClick={() => handleSendEmail(sale)}
+                          title="Enviar Factura por Correo"
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          {sendingEmailId === sale.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                          ) : (
+                            <Mail className="w-4 h-4" />
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => openSendModal(sale)}
+                          title="Elegir Canal (WhatsApp o Email)"
+                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Send className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
@@ -494,32 +657,212 @@ export const SalesDocumentsTab: React.FC = () => {
               </table>
             </div>
 
-            {/* Totales */}
-            <div className="flex justify-between items-center pt-2 border-t border-slate-100">
-              <button
-                onClick={() => handlePrint(selectedSale)}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-2 text-sm font-medium transition-colors"
-              >
-                <Printer className="w-4 h-4" />
-                Imprimir Comprobante
-              </button>
+            {/* Totales y Acciones */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pt-4 border-t border-slate-100">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePrint(selectedSale)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white flex items-center gap-1.5 text-xs font-bold shadow-sm transition-all cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  Imprimir Ticket
+                </button>
 
-              <div className="w-64 space-y-1.5 text-sm">
+                <button
+                  type="button"
+                  disabled={sendingWhatsAppId === selectedSale.id}
+                  onClick={() => handleSendWhatsApp(selectedSale)}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white flex items-center gap-1.5 text-xs font-bold shadow-sm shadow-emerald-600/20 transition-all cursor-pointer"
+                >
+                  {sendingWhatsAppId === selectedSale.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <MessageCircle className="w-4 h-4" />
+                  )}
+                  WhatsApp
+                </button>
+
+                <button
+                  type="button"
+                  disabled={sendingEmailId === selectedSale.id}
+                  onClick={() => handleSendEmail(selectedSale)}
+                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white flex items-center gap-1.5 text-xs font-bold shadow-sm shadow-blue-600/20 transition-all cursor-pointer"
+                >
+                  {sendingEmailId === selectedSale.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Mail className="w-4 h-4" />
+                  )}
+                  Correo
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openSendModal(selectedSale)}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  Elegir Envío
+                </button>
+              </div>
+
+              <div className="w-full md:w-64 space-y-1.5 text-sm bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div className="flex justify-between text-slate-500">
                   <span>Subtotal:</span>
-                  <span>${selectedSale.subtotal.toFixed(2)}</span>
+                  <span className="font-mono font-semibold">${selectedSale.subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
                   <span>Impuestos (IVA):</span>
-                  <span>${selectedSale.tax_amount.toFixed(2)}</span>
+                  <span className="font-mono font-semibold">${selectedSale.tax_amount.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-base font-bold text-indigo-600 pt-1 border-t border-slate-200">
+                <div className="flex justify-between text-base font-black text-indigo-600 pt-1 border-t border-slate-200">
                   <span>Total Cobrado:</span>
-                  <span>${selectedSale.total_amount.toFixed(2)}</span>
+                  <span className="font-mono">${selectedSale.total_amount.toFixed(2)}</span>
                 </div>
               </div>
             </div>
           </div>
+        )}
+      </Modal>
+
+      {/* Modal para Elegir Canal de Envío (WhatsApp o Correo) */}
+      <Modal
+        isOpen={isSendModalOpen && !!sendTargetSale}
+        onClose={() => {
+          setIsSendModalOpen(false);
+          setSendTargetSale(null);
+        }}
+        title={`Enviar Factura: ${sendTargetSale?.invoice_number || ''}`}
+        maxWidth="md"
+      >
+        {sendTargetSale && (
+          <form onSubmit={handleConfirmSendModal} className="p-6 space-y-5">
+            <div>
+              <p className="text-xs text-slate-500 mb-3">
+                Selecciona el medio por el cual deseas enviar el comprobante de venta a <strong>{sendTargetSale.cat_clients?.name}</strong>:
+              </p>
+
+              {/* Selector de Canal: WhatsApp o Correo */}
+              <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setSendChannel('whatsapp')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    sendChannel === 'whatsapp'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>WhatsApp</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSendChannel('email')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    sendChannel === 'email'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Mail className="w-4 h-4" />
+                  <span>Correo Electrónico</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Input según canal elegido */}
+            {sendChannel === 'whatsapp' ? (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  Número de Celular (WhatsApp) *
+                </label>
+                <div className="relative">
+                  <Smartphone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="tel"
+                    required
+                    placeholder="Ej. 0991234567 o 593991234567"
+                    value={sendPhone}
+                    onChange={e => setSendPhone(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Se enviará el desglose completo de productos, totales y recordatorio vehicular por WhatsApp.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  Correo Electrónico del Cliente *
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="email"
+                    required
+                    placeholder="cliente@ejemplo.com"
+                    value={sendEmail}
+                    onChange={e => setSendEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Se enviará la factura digital con formato oficial y diseño responsive al correo del cliente.
+                </p>
+              </div>
+            )}
+
+            {/* Resumen Factura */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs flex justify-between items-center">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Total a facturar:</span>
+                <span className="font-mono text-base font-black text-indigo-600">${sendTargetSale.total_amount.toFixed(2)}</span>
+              </div>
+              <div className="text-right text-slate-500">
+                <span>{sendTargetSale.tra_sale_details?.length || 0} ítems</span>
+              </div>
+            </div>
+
+            {/* Botones de acción */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsSendModalOpen(false)}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={isSubmittingSend}
+                className={`px-5 py-2.5 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer disabled:opacity-50 ${
+                  sendChannel === 'whatsapp'
+                    ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                    : 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
+                }`}
+              >
+                {isSubmittingSend ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : sendChannel === 'whatsapp' ? (
+                  <MessageCircle className="w-4 h-4" />
+                ) : (
+                  <Mail className="w-4 h-4" />
+                )}
+                <span>
+                  {isSubmittingSend
+                    ? 'Enviando...'
+                    : sendChannel === 'whatsapp'
+                    ? 'Enviar por WhatsApp'
+                    : 'Enviar por Correo'}
+                </span>
+              </button>
+            </div>
+          </form>
         )}
       </Modal>
     </div>

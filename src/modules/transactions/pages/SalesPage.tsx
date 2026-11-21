@@ -3,7 +3,7 @@ import { supabase } from '../../../config/supabase';
 import {
   ShoppingCart, Search, Plus, Trash2, Save, Store, UserCheck, AlertCircle, CheckCircle2,
   FileText, BarChart3, List, Phone, Mail, MapPin, User, Check, ChevronDown, X, Printer,
-  Car, Wrench, Gauge
+  Car, Wrench, Gauge, Loader2, MessageCircle
 } from 'lucide-react';
 import { usePermissions } from '../../../context/AuthContext';
 import { useAuth } from '../../../context/AuthContext';
@@ -12,6 +12,8 @@ import { SalesReportsTab } from '../components/SalesReportsTab';
 import { OilChangeHistoryTab } from '../components/OilChangeHistoryTab';
 import { Modal } from '../../../components/ui/Modal';
 import { Pagination } from '../../../components/ui/Pagination';
+import { printThermalTicket } from '../../../utils/printTicket';
+import { sendInvoiceEmail, sendInvoiceWhatsApp } from '../../../services/notificationService';
 
 // --- Types ---
 interface Client {
@@ -37,6 +39,9 @@ interface CompletedSale {
   invoiceNumber: string;
   clientName: string;
   clientDoc: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientId?: number;
   branchName: string;
   warehouseName: string;
   subtotal: number;
@@ -155,93 +160,148 @@ export const SalesPage = () => {
   // Completed Sale Modal State
   const [isSaleCompletedModalOpen, setIsSaleCompletedModalOpen] = useState(false);
   const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
+  const [sendingInvoiceEmail, setSendingInvoiceEmail] = useState(false);
+  const [sendingInvoiceWhatsApp, setSendingInvoiceWhatsApp] = useState(false);
+  const [invoiceEmailStatus, setInvoiceEmailStatus] = useState<string | null>(null);
 
   const handlePrintCompletedSale = (sale: CompletedSale) => {
-    const printWindow = window.open('', '_blank', 'width=600,height=700');
-    if (!printWindow) return;
+    printThermalTicket({
+      companyName: 'TALLER MECÁNICO',
+      branchName: sale.branchName,
+      warehouseName: sale.warehouseName,
+      invoiceNumber: sale.invoiceNumber,
+      date: sale.date,
+      clientName: sale.clientName,
+      clientDoc: sale.clientDoc,
+      items: sale.items,
+      subtotal: sale.subtotal,
+      tax: sale.tax,
+      total: sale.total,
+      oilChangeData: sale.oilChangeData
+        ? {
+          vehiclePlate: sale.oilChangeData.vehiclePlate,
+          vehicleBrand: sale.oilChangeData.vehicleBrand,
+          vehicleModel: sale.oilChangeData.vehicleModel,
+          currentMileage: sale.oilChangeData.currentMileage,
+          nextChangeMileage: sale.oilChangeData.nextChangeMileage,
+          oilType: sale.oilChangeData.oilType
+        }
+        : undefined
+    });
+  };
 
-    const itemsHtml = sale.items
-      .map(
-        d => `
-        <tr>
-          <td style="padding: 6px 4px; border-bottom: 1px dashed #ddd;">${d.name}</td>
-          <td style="text-align: center; padding: 6px 4px; border-bottom: 1px dashed #ddd;">${d.quantity}</td>
-          <td style="text-align: right; padding: 6px 4px; border-bottom: 1px dashed #ddd;">$${d.unitPrice.toFixed(2)}</td>
-          <td style="text-align: right; padding: 6px 4px; border-bottom: 1px dashed #ddd;">$${d.total.toFixed(2)}</td>
-        </tr>
-      `
-      )
-      .join('');
+  const handleSendCompletedSaleEmail = async (sale: CompletedSale) => {
+    let email = sale.clientEmail;
+    if (!email || !email.includes('@')) {
+      const input = window.prompt(`Ingrese el correo electrónico para ${sale.clientName}:`, '');
+      if (!input || !input.includes('@')) return;
+      email = input.trim();
+      // Guardar en cat_clients si tiene clientId
+      if (sale.clientId) {
+        try {
+          await supabase.from('cat_clients').update({ email }).eq('id', sale.clientId);
+        } catch (e) { }
+      }
+    }
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Comprobante ${sale.invoiceNumber}</title>
-          <style>
-            body { font-family: monospace; padding: 20px; font-size: 13px; color: #111; }
-            .header { text-align: center; margin-bottom: 15px; }
-            .title { font-size: 16px; font-weight: bold; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            .totals { margin-top: 15px; border-top: 1px dashed #333; padding-top: 8px; text-align: right; }
-            .totals div { margin: 4px 0; }
-            .bold { font-weight: bold; font-size: 15px; }
-            .footer { text-align: center; margin-top: 25px; font-size: 11px; color: #666; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="title">TALLER MECÁNICO</div>
-            <div>Sucursal: ${sale.branchName}</div>
-            <div>Bodega: ${sale.warehouseName}</div>
-            <div><strong>Comprobante: ${sale.invoiceNumber}</strong></div>
-            <div>Fecha: ${sale.date}</div>
-          </div>
-          <div><strong>Cliente:</strong> ${sale.clientName}</div>
-          <div><strong>Identificación:</strong> ${sale.clientDoc}</div>
+    try {
+      setSendingInvoiceEmail(true);
+      setInvoiceEmailStatus('Enviando factura por correo...');
+      const res = await sendInvoiceEmail({
+        toEmail: email,
+        toName: sale.clientName,
+        invoiceNumber: sale.invoiceNumber,
+        date: sale.date,
+        branchName: sale.branchName,
+        warehouseName: sale.warehouseName,
+        clientDoc: sale.clientDoc,
+        items: sale.items,
+        subtotal: sale.subtotal,
+        tax: sale.tax,
+        total: sale.total,
+        oilChangeData: sale.oilChangeData
+          ? {
+            vehiclePlate: sale.oilChangeData.vehiclePlate,
+            vehicleBrand: sale.oilChangeData.vehicleBrand,
+            vehicleModel: sale.oilChangeData.vehicleModel,
+            currentMileage: sale.oilChangeData.currentMileage,
+            nextChangeMileage: sale.oilChangeData.nextChangeMileage,
+            oilType: sale.oilChangeData.oilType
+          }
+          : undefined
+      });
 
-          <table>
-            <thead>
-              <tr style="border-bottom: 1px solid #333; text-align: left;">
-                <th style="padding: 4px;">Producto</th>
-                <th style="text-align: center; padding: 4px;">Cant</th>
-                <th style="text-align: right; padding: 4px;">P.Unit</th>
-                <th style="text-align: right; padding: 4px;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
+      if (res.success) {
+        setInvoiceEmailStatus(`✅ ${res.message}`);
+        setTimeout(() => setInvoiceEmailStatus(null), 5000);
+      } else {
+        setInvoiceEmailStatus(`❌ ${res.message}`);
+      }
+    } catch (err: any) {
+      setInvoiceEmailStatus(`❌ Error: ${err.message}`);
+    } finally {
+      setSendingInvoiceEmail(false);
+    }
+  };
 
-          <div class="totals">
-            <div>Subtotal: $${sale.subtotal.toFixed(2)}</div>
-            <div>IVA: $${sale.tax.toFixed(2)}</div>
-            <div class="bold">TOTAL: $${sale.total.toFixed(2)}</div>
-          </div>
+  const handleSendCompletedSaleWhatsApp = async (sale: CompletedSale) => {
+    let phone = sale.clientPhone;
+    if (!phone) {
+      const input = window.prompt(`Ingrese el número de celular para enviar la factura por WhatsApp a ${sale.clientName}:`, '');
+      if (!input || input.trim().length < 8) return;
+      phone = input.trim();
+      if (sale.clientId) {
+        try {
+          await supabase.from('cat_clients').update({ phone }).eq('id', sale.clientId);
+        } catch (e) { }
+      }
+    }
 
-          ${sale.oilChangeData ? `
-            <div style="margin-top: 15px; border: 2px dashed #222; padding: 10px; border-radius: 6px; background-color: #fafafa;">
-              <div style="text-align: center; font-weight: bold; font-size: 13px;">🚗 RECORDATORIO DE CAMBIO DE ACEITE</div>
-              <div style="margin-top: 5px;"><strong>Vehículo:</strong> ${[sale.oilChangeData.vehicleBrand, sale.oilChangeData.vehicleModel].filter(Boolean).join(' ')} (Placa: ${sale.oilChangeData.vehiclePlate})</div>
-              <div><strong>Km Actual:</strong> ${sale.oilChangeData.currentMileage.toLocaleString()} km</div>
-              <div style="font-size: 14px; font-weight: bold; color: #000; margin: 4px 0;">
-                PRÓXIMO CAMBIO: ${sale.oilChangeData.nextChangeMileage.toLocaleString()} km
-              </div>
-              <div><strong>Aceite:</strong> ${sale.oilChangeData.oilType || 'Sintético'}</div>
-            </div>
-          ` : ''}
+    try {
+      setSendingInvoiceWhatsApp(true);
+      setInvoiceEmailStatus('Enviando factura por WhatsApp...');
+      const res = await sendInvoiceWhatsApp({
+        phone,
+        clientName: sale.clientName,
+        clientDoc: sale.clientDoc,
+        invoiceNumber: sale.invoiceNumber,
+        date: sale.date,
+        branchName: sale.branchName,
+        items: sale.items,
+        subtotal: sale.subtotal,
+        tax: sale.tax,
+        total: sale.total,
+        oilChangeData: sale.oilChangeData
+          ? {
+            vehiclePlate: sale.oilChangeData.vehiclePlate,
+            vehicleBrand: sale.oilChangeData.vehicleBrand,
+            vehicleModel: sale.oilChangeData.vehicleModel,
+            currentMileage: sale.oilChangeData.currentMileage,
+            nextChangeMileage: sale.oilChangeData.nextChangeMileage,
+            oilType: sale.oilChangeData.oilType
+          }
+          : undefined
+      });
 
-          <div class="footer">
-            <p>¡Gracias por su preferencia!</p>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-    }, 250);
+      if (res.success) {
+        setInvoiceEmailStatus(`✅ ${res.message}`);
+        if (res.webFallbackUrl && res.message.includes('WhatsApp Web')) {
+          window.open(res.webFallbackUrl, '_blank');
+        }
+        setTimeout(() => setInvoiceEmailStatus(null), 5000);
+      } else {
+        if (res.webFallbackUrl) {
+          window.open(res.webFallbackUrl, '_blank');
+          setInvoiceEmailStatus(`✅ Abriendo WhatsApp para enviar comprobante a ${phone}`);
+        } else {
+          setInvoiceEmailStatus(`❌ ${res.message}`);
+        }
+      }
+    } catch (err: any) {
+      setInvoiceEmailStatus(`❌ Error WhatsApp: ${err.message}`);
+    } finally {
+      setSendingInvoiceWhatsApp(false);
+    }
   };
 
   useEffect(() => {
@@ -784,6 +844,9 @@ export const SalesPage = () => {
         invoiceNumber: docNumber,
         clientName: clientObj?.name || 'Consumidor Final',
         clientDoc: clientObj?.document_id || '9999999999999',
+        clientEmail: clientObj?.email || '',
+        clientPhone: clientObj?.phone || '',
+        clientId: clientObj?.id,
         branchName: branchObj?.name || 'Matriz Principal',
         warehouseName: whObj?.name || 'Bodega Principal',
         subtotal: globalSubtotal,
@@ -1399,10 +1462,10 @@ export const SalesPage = () => {
             title="Catálogo de Productos - Existencias y Precios"
             maxWidth="3xl"
           >
-            <div className="p-6 space-y-4 flex flex-col">
+            <div className="p-3 sm:p-6 space-y-3 sm:space-y-4 flex flex-col">
               {/* Buscador interno del catálogo */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="relative flex-1 min-w-[220px]">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3">
+                <div className="relative flex-1 min-w-[200px]">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
@@ -1415,95 +1478,173 @@ export const SalesPage = () => {
                     className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
-                <span className="text-xs text-slate-500 bg-slate-100 px-3 py-2 rounded-xl font-medium">
+                <span className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 sm:py-2 rounded-xl font-medium w-fit sm:w-auto">
                   Bodega: <strong className="text-slate-800">{warehouses.find(w => w.id === Number(selectedWarehouse))?.name || 'Seleccionada'}</strong>
                 </span>
               </div>
 
-              {/* Tabla de Productos */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-sm text-slate-700">
-                  <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase border-b border-slate-200">
-                    <tr>
-                      <th className="py-2.5 px-3">SKU</th>
-                      <th className="py-2.5 px-3">Producto / Insumo</th>
-                      <th className="py-2.5 px-3 text-right">Precio V.</th>
-                      <th className="py-2.5 px-3 text-right">IVA %</th>
-                      <th className="py-2.5 px-3 text-center">Stock Disp.</th>
-                      <th className="py-2.5 px-3 text-center">Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {paginatedCatalogProducts.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400 text-sm">
-                          No se encontraron productos disponibles en esta bodega.
-                        </td>
-                      </tr>
-                    ) : (
-                      paginatedCatalogProducts.map(prod => {
-                        const isService = prod.is_service || prod.type_id === 3;
-                        const stock = isService ? 9999 : (prod.tra_product_stock?.[0]?.quantity || 0);
-                        const inCartCount = details.find(d => d.product.id === prod.id)?.quantity || 0;
-                        const availableLeft = isService ? 9999 : (stock - inCartCount);
+              {/* Contenedor del Catálogo */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                {/* 1. Vista Táctil en Tarjetas para Móviles (md:hidden) */}
+                <div className="block md:hidden p-2.5 space-y-2.5 max-h-[60vh] overflow-y-auto">
+                  {paginatedCatalogProducts.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-sm">
+                      No se encontraron productos disponibles en esta bodega.
+                    </div>
+                  ) : (
+                    paginatedCatalogProducts.map(prod => {
+                      const isService = prod.is_service || prod.type_id === 3;
+                      const stock = isService ? 9999 : (prod.tra_product_stock?.[0]?.quantity || 0);
+                      const inCartCount = details.find(d => d.product.id === prod.id)?.quantity || 0;
+                      const availableLeft = isService ? 9999 : (stock - inCartCount);
 
-                        return (
-                          <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="py-2.5 px-3 font-mono text-xs font-semibold text-slate-500">
-                              {prod.sku}
-                            </td>
-                            <td className="py-2.5 px-3 font-medium text-slate-900">
-                              <div className="flex items-center gap-2">
-                                <span>{prod.name}</span>
+                      return (
+                        <div
+                          key={prod.id}
+                          className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 shadow-sm hover:border-indigo-300 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                  {prod.sku}
+                                </span>
                                 {isService && (
                                   <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded">
                                     Servicio
                                   </span>
                                 )}
                               </div>
-                            </td>
-                            <td className="py-2.5 px-3 text-right font-bold text-indigo-600">
-                              ${prod.base_price.toFixed(2)}
-                            </td>
-                            <td className="py-2.5 px-3 text-right text-xs text-slate-500">
-                              {prod.cat_taxes?.percentage || 0}%
-                            </td>
-                            <td className="py-2.5 px-3 text-center">
+                              <p className="font-bold text-slate-800 text-sm mt-1 leading-tight">{prod.name}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="font-bold text-indigo-600 text-base font-mono">${prod.base_price.toFixed(2)}</p>
+                              <p className="text-[10px] text-slate-400">IVA: {prod.cat_taxes?.percentage || 0}%</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 gap-2">
+                            <div>
                               {isService ? (
-                                <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
                                   Servicio
                                 </span>
                               ) : (
                                 <span
-                                  className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${availableLeft > 0
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    : 'bg-red-50 text-red-700 border border-red-200'
+                                  className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${availableLeft > 0
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-red-50 text-red-700 border-red-200'
                                     }`}
                                 >
-                                  {availableLeft} unid.
+                                  {availableLeft > 0 ? `${availableLeft} disp.` : 'Agotado'}
                                 </span>
                               )}
-                            </td>
-                            <td className="py-2.5 px-3 text-center">
-                              <button
-                                type="button"
-                                onClick={() => addProductToDetail(prod)}
-                                disabled={!isService && availableLeft <= 0}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 mx-auto transition-colors ${isService || availableLeft > 0
-                                  ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white cursor-pointer'
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => addProductToDetail(prod)}
+                              disabled={!isService && availableLeft <= 0}
+                              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer ${isService || availableLeft > 0
+                                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-600/20 active:scale-95'
                                   : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                  }`}
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                Agregar {inCartCount > 0 ? `(${inCartCount})` : ''}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+                                }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              {inCartCount > 0 ? `Agregar (${inCartCount})` : 'Agregar'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* 2. Vista en Tabla para Tablets y Escritorio (hidden md:block) con scroll horizontal garantizado */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-left text-sm text-slate-700">
+                    <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-3">SKU</th>
+                        <th className="py-2.5 px-3">Producto / Insumo</th>
+                        <th className="py-2.5 px-3 text-right">Precio V.</th>
+                        <th className="py-2.5 px-3 text-right">IVA %</th>
+                        <th className="py-2.5 px-3 text-center">Stock Disp.</th>
+                        <th className="py-2.5 px-3 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {paginatedCatalogProducts.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400 text-sm">
+                            No se encontraron productos disponibles en esta bodega.
+                          </td>
+                        </tr>
+                      ) : (
+                        paginatedCatalogProducts.map(prod => {
+                          const isService = prod.is_service || prod.type_id === 3;
+                          const stock = isService ? 9999 : (prod.tra_product_stock?.[0]?.quantity || 0);
+                          const inCartCount = details.find(d => d.product.id === prod.id)?.quantity || 0;
+                          const availableLeft = isService ? 9999 : (stock - inCartCount);
+
+                          return (
+                            <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-2.5 px-3 font-mono text-xs font-semibold text-slate-500">
+                                {prod.sku}
+                              </td>
+                              <td className="py-2.5 px-3 font-medium text-slate-900">
+                                <div className="flex items-center gap-2">
+                                  <span>{prod.name}</span>
+                                  {isService && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded">
+                                      Servicio
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-indigo-600">
+                                ${prod.base_price.toFixed(2)}
+                              </td>
+                              <td className="py-2.5 px-3 text-right text-xs text-slate-500">
+                                {prod.cat_taxes?.percentage || 0}%
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                {isService ? (
+                                  <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                    Servicio
+                                  </span>
+                                ) : (
+                                  <span
+                                    className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${availableLeft > 0
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        : 'bg-red-50 text-red-700 border border-red-200'
+                                      }`}
+                                  >
+                                    {availableLeft} unid.
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => addProductToDetail(prod)}
+                                  disabled={!isService && availableLeft <= 0}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 mx-auto transition-colors ${isService || availableLeft > 0
+                                      ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white cursor-pointer'
+                                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                    }`}
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  Agregar {inCartCount > 0 ? `(${inCartCount})` : ''}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
 
                 {filteredCatalogProducts.length > 0 && (
                   <Pagination
@@ -1845,12 +1986,24 @@ export const SalesPage = () => {
                   </div>
                 </div>
 
+                {/* Estado de envío de correo */}
+                {invoiceEmailStatus && (
+                  <div className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between ${invoiceEmailStatus.includes('✅')
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : invoiceEmailStatus.includes('❌')
+                        ? 'bg-red-50 text-red-800 border border-red-200'
+                        : 'bg-indigo-50 text-indigo-800 border border-indigo-200 animate-pulse'
+                    }`}>
+                    <span>{invoiceEmailStatus}</span>
+                  </div>
+                )}
+
                 {/* Botones de Acción */}
-                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2">
                   <button
                     type="button"
                     onClick={() => handlePrintCompletedSale(completedSale)}
-                    className="w-full sm:flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 transition-all cursor-pointer"
+                    className="py-3 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
                   >
                     <Printer className="w-4 h-4" />
                     Imprimir Ticket
@@ -1858,8 +2011,36 @@ export const SalesPage = () => {
 
                   <button
                     type="button"
+                    disabled={sendingInvoiceWhatsApp}
+                    onClick={() => handleSendCompletedSaleWhatsApp(completedSale)}
+                    className="py-3 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all cursor-pointer"
+                  >
+                    {sendingInvoiceWhatsApp ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <MessageCircle className="w-4 h-4" />
+                    )}
+                    Enviar WhatsApp
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={sendingInvoiceEmail}
+                    onClick={() => handleSendCompletedSaleEmail(completedSale)}
+                    className="py-3 px-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/25 transition-all cursor-pointer"
+                  >
+                    {sendingInvoiceEmail ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Mail className="w-4 h-4" />
+                    )}
+                    Enviar Correo
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setIsSaleCompletedModalOpen(false)}
-                    className="w-full sm:flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 transition-all cursor-pointer"
+                    className="py-3 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/25 transition-all cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     Nueva Venta
