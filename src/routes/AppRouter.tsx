@@ -65,7 +65,19 @@ const COMPONENT_REGISTRY: Record<string, React.ReactNode> = {
 };
 
 export const AppRouter = () => {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+
+  // Mientras Supabase restaura la sesión, no redirigir para no perder la ruta donde estaba el usuario
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-white text-sm font-medium">Cargando sistema...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <BrowserRouter>
@@ -77,7 +89,7 @@ export const AppRouter = () => {
         </Route>
 
         {/* Rutas Privadas / Main */}
-        <Route path="/*" element={<MainLayout />}>
+        <Route path="/*" element={user ? <MainLayout /> : <Navigate to="/auth/login" replace />}>
           <Route index element={<DashboardPlaceholder />} />
           
           {/* RUTEADOR DINÁMICO: 

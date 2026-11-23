@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../../config/supabase';
 import {
   ShoppingCart, Search, Plus, Trash2, Save, Store, UserCheck, AlertCircle, CheckCircle2,
@@ -118,7 +119,36 @@ export const SalesPage = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [activeTab, setActiveTab] = useState<'proceso' | 'documentos' | 'informes' | 'aceite'>('proceso');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const validTabs = ['proceso', 'documentos', 'informes', 'aceite'] as const;
+  type TabType = typeof validTabs[number];
+
+  const getInitialTab = (): TabType => {
+    const urlTab = searchParams.get('tab') as TabType;
+    if (urlTab && validTabs.includes(urlTab)) return urlTab;
+    const storedTab = localStorage.getItem('last_sales_tab') as TabType;
+    if (storedTab && validTabs.includes(storedTab)) return storedTab;
+    return 'proceso';
+  };
+
+  const [activeTab, setActiveTabState] = useState<TabType>(getInitialTab);
+
+  const setActiveTab = (tab: TabType) => {
+    setActiveTabState(tab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', tab);
+      return next;
+    }, { replace: true });
+    localStorage.setItem('last_sales_tab', tab);
+  };
+
+  useEffect(() => {
+    const currentUrlTab = searchParams.get('tab') as TabType;
+    if (currentUrlTab && validTabs.includes(currentUrlTab) && currentUrlTab !== activeTab) {
+      setActiveTabState(currentUrlTab);
+    }
+  }, [searchParams]);
 
   // Quick Client Creation Modal
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
