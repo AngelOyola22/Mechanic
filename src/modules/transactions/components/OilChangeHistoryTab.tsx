@@ -124,6 +124,39 @@ export const OilChangeHistoryTab: React.FC = () => {
   const [savingEmail, setSavingEmail] = useState(false);
   const [emailModalError, setEmailModalError] = useState<string | null>(null);
 
+  // Estado si la tabla tra_oil_changes no existe en Supabase
+  const [isTableMissingInDb, setIsTableMissingInDb] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  const CREATE_TABLE_SQL = `-- Ejecutar en Supabase > SQL Editor:
+CREATE TABLE IF NOT EXISTS tra_oil_changes (
+    id BIGSERIAL PRIMARY KEY,
+    sale_id BIGINT REFERENCES tra_sales(id) ON DELETE SET NULL,
+    client_id BIGINT REFERENCES cat_clients(id) ON DELETE CASCADE,
+    vehicle_plate VARCHAR(20) NOT NULL,
+    vehicle_brand VARCHAR(100),
+    vehicle_model VARCHAR(100),
+    vehicle_year INTEGER,
+    current_mileage INTEGER NOT NULL DEFAULT 0,
+    next_change_mileage INTEGER NOT NULL DEFAULT 0,
+    oil_type VARCHAR(100) DEFAULT 'Sintético 5W-30',
+    notes TEXT,
+    service_date TIMESTAMPTZ DEFAULT NOW(),
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE tra_oil_changes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permitir todo tra_oil_changes" ON tra_oil_changes FOR ALL TO public USING (true) WITH CHECK (true);
+GRANT ALL ON TABLE tra_oil_changes TO authenticated, anon, service_role;
+GRANT ALL ON SEQUENCE tra_oil_changes_id_seq TO authenticated, anon, service_role;`;
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(CREATE_TABLE_SQL);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
+
   useEffect(() => {
     loadOilChanges();
     loadCatalogs();
@@ -150,43 +183,112 @@ export const OilChangeHistoryTab: React.FC = () => {
       let dbData: OilChangeRecord[] = [];
 
       try {
-        const { data, error } = await supabase
+        // Consulta directa a tra_oil_changes sin joins frágiles de PostgREST
+        const { data: rawOil, error: oilError } = await supabase
           .from('tra_oil_changes')
+          .select('*')
+          .order('id', { ascending: false });
+
+        if (oilError) {
+          if (oilError.code === '42P01' || oilError.message?.toLowerCase().includes('does not exist')) {
+            setIsTableMissingInDb(true);
+            console.warn('tra_oil_changes no existe en Supabase aún.');
+          }
+        } else {
+          setIsTableMissingInDb(false);
+          if (rawOil && rawOil.length > 0) {
+            // Enriquecer con cat_clients y tra_sales en memoria
+            const [clientsRes, salesRes] = await Promise.all([
+              supabase.from('cat_clients').select('id, name, document_id, phone, email'),
+              supabase.from('tra_sales').select('id, invoice_number')
+            ]);
+            const clientsMap = new Map((clientsRes.data || []).map((c: any) => [c.id, c]));
+            const salesMap = new Map((salesRes.data || []).map((s: any) => [s.id, s.invoice_number]));
+
+            dbData = rawOil.map((d: any) => {
+              const cl = clientsMap.get(d.client_id);
+              return {
+                id: d.id,
+                sale_id: d.sale_id,
+                invoice_number: d.sale_id ? (salesMap.get(d.sale_id) || 'FAC-VENTA') : (d.invoice_number || 'MANUAL'),
+                client_id: d.client_id,
+                client_name: cl?.name || d.client_name || 'Cliente',
+                client_phone: cl?.phone || d.client_phone || '',
+                client_email: cl?.email || d.client_email || '',
+                client_document_id: cl?.document_id || d.client_document_id || '',
+                vehicle_plate: d.vehicle_plate,
+                vehicle_brand: d.vehicle_brand || '',
+                vehicle_model: d.vehicle_model || '',
+                vehicle_year: d.vehicle_year,
+                current_mileage: d.current_mileage,
+                next_change_mileage: d.next_change_mileage,
+                oil_type: d.oil_type || 'Estándar',
+                notes: d.notes || '',
+                service_date: d.service_date,
+                status: d.status || 'ACTIVE'
+              };
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Error al consultar tra_oil_changes:', err);
+      }
+
+      // Escaneo secundario: buscar en tra_sale_details si hay facturas con cambio de aceite no registradas
+      try {
+        const { data: saleItems } = await supabase
+          .from('tra_sale_details')
           .select(`
-            id, sale_id, client_id, vehicle_plate, vehicle_brand, vehicle_model, vehicle_year,
-            current_mileage, next_change_mileage, oil_type, notes, service_date, status,
-            cat_clients (name, phone, email, document_id),
-            tra_sales (invoice_number)
+            id, sale_id,
+            cat_products (id, name, sku),
+            tra_sales (
+              id, invoice_number, created_at, client_id,
+              cat_clients (id, name, document_id, phone, email)
+            )
           `)
           .order('id', { ascending: false });
 
-        if (!error && data) {
-          dbData = data.map((d: any) => ({
-            id: d.id,
-            sale_id: d.sale_id,
-            invoice_number: d.tra_sales?.invoice_number || 'N/A',
-            client_id: d.client_id,
-            client_name: d.cat_clients?.name || 'Cliente',
-            client_phone: d.cat_clients?.phone || '',
-            client_email: d.cat_clients?.email || '',
-            client_document_id: d.cat_clients?.document_id || '',
-            vehicle_plate: d.vehicle_plate,
-            vehicle_brand: d.vehicle_brand || '',
-            vehicle_model: d.vehicle_model || '',
-            vehicle_year: d.vehicle_year,
-            current_mileage: d.current_mileage,
-            next_change_mileage: d.next_change_mileage,
-            oil_type: d.oil_type || 'Estándar',
-            notes: d.notes || '',
-            service_date: d.service_date,
-            status: d.status || 'ACTIVE'
-          }));
+        if (saleItems && saleItems.length > 0) {
+          saleItems.forEach((si: any) => {
+            const prod = si.cat_products;
+            const pName = (prod?.name || '').toLowerCase();
+            const pSku = (prod?.sku || '').toLowerCase();
+
+            if (pSku === 'srv-002' || pName.includes('aceite') || pName.includes('oil')) {
+              const sale = si.tra_sales;
+              if (sale) {
+                const alreadyRecorded = dbData.some(item => item.sale_id === sale.id || item.invoice_number === sale.invoice_number);
+                if (!alreadyRecorded) {
+                  const client = sale.cat_clients;
+                  dbData.push({
+                    id: `sale-${sale.id}`,
+                    sale_id: sale.id,
+                    invoice_number: sale.invoice_number,
+                    client_id: sale.client_id || client?.id || 0,
+                    client_name: client?.name || 'Cliente',
+                    client_phone: client?.phone || '',
+                    client_email: client?.email || '',
+                    client_document_id: client?.document_id || '',
+                    vehicle_plate: 'AUT-SRV',
+                    vehicle_brand: 'Servicio',
+                    vehicle_model: 'Cambio de Aceite',
+                    current_mileage: 0,
+                    next_change_mileage: 5000,
+                    oil_type: prod?.name || 'Cambio de Aceite',
+                    notes: `Facturado en ${sale.invoice_number}`,
+                    service_date: sale.created_at,
+                    status: 'ACTIVE'
+                  });
+                }
+              }
+            }
+          });
         }
-      } catch (err) {
-        console.warn('tra_oil_changes table query error (fallback to local):', err);
+      } catch (salesScanErr) {
+        console.warn('Notice scanning sales details:', salesScanErr);
       }
 
-      // Merge with local storage backup
+      // Mezclar con respaldo local persistente
       const localStr = localStorage.getItem(LOCAL_STORAGE_KEY);
       let localData: OilChangeRecord[] = [];
       if (localStr) {
@@ -197,16 +299,20 @@ export const OilChangeHistoryTab: React.FC = () => {
         }
       }
 
-      // Combine unique by plate + service_date
+      // Combinar asegurando registros únicos
       const combined = [...dbData];
       localData.forEach(item => {
-        const exists = combined.some(c => c.vehicle_plate === item.vehicle_plate && c.service_date === item.service_date);
+        const exists = combined.some(c =>
+          c.id === item.id ||
+          (c.sale_id && item.sale_id && c.sale_id === item.sale_id) ||
+          (c.vehicle_plate === item.vehicle_plate && c.service_date === item.service_date)
+        );
         if (!exists) {
           combined.push(item);
         }
       });
 
-      // Synchronize client details (phone & email) directly from cat_clients
+      // Sincronizar teléfonos y correos actualizados desde cat_clients
       try {
         const { data: clientsData } = await supabase
           .from('cat_clients')
@@ -227,13 +333,15 @@ export const OilChangeHistoryTab: React.FC = () => {
               if (matched.document_id) record.client_document_id = matched.document_id;
             }
           });
-
-          // Update local backup with synchronized client details
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(combined));
         }
       } catch (clientErr) {
         console.warn('Could not enrich oil change clients from cat_clients:', clientErr);
       }
+
+      // Guardar respaldo actualizado para garantizar que nunca se pierda
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(combined));
+      } catch (e) {}
 
       setRecords(combined);
     } catch (err) {
@@ -873,6 +981,33 @@ export const OilChangeHistoryTab: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Alerta si la tabla de base de datos no existe en Supabase */}
+      {isTableMissingInDb && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-950">
+                La tabla de Cambios de Aceite (<code>tra_oil_changes</code>) aún no ha sido creada en tu base de datos Supabase
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                Por esta razón la información no se guarda de forma persistente en la nube al cerrar sesión. Copia el script SQL y pégalo en el <strong>SQL Editor de Supabase</strong> para habilitar el guardado permanente.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleCopySql}
+            className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shrink-0 flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+          >
+            {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copiedSql ? '¡SQL Copiado!' : 'Copiar SQL para Supabase'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Alerta de notificación enviada o advertencia */}
       {notificationAlert && (

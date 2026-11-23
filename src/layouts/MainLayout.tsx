@@ -55,14 +55,14 @@ export const MainLayout = () => {
         {/* Cabecera del Sidebar */}
         <div className={`flex items-center mb-10 p-6 ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 min-w-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/30 overflow-hidden">
+            <div className="w-10 h-10 min-w-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30 overflow-hidden">
               {companySettings?.logo_url ? (
                 <img src={companySettings.logo_url} alt="Logo" className="w-full h-full object-cover" />
               ) : (
-                <Wrench className="w-5 h-5 text-white" />
+                <img src="/logo.svg" alt="Logo Taller Mecánico" className="w-full h-full object-contain p-1" />
               )}
             </div>
-            {!isCollapsed && <h2 className="text-xl font-bold text-white tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">{companySettings?.company_name || 'Mechanic'}</h2>}
+            {!isCollapsed && <h2 className="text-xl font-bold text-white tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">{companySettings?.company_name || 'Taller Mecánico'}</h2>}
           </div>
         </div>
 
